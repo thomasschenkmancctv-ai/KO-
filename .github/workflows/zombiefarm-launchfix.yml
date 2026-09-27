@@ -19,16 +19,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Restore reviewed text sources only
+      - name: Restore reviewed text sources and minimized-window fix
         shell: python
         run: |
           from pathlib import Path
-          import base64,lzma,hashlib,json
+          import base64,lzma,hashlib,json,subprocess
           b=base64.b64decode(''.join((Path('zombiefarm-launchfix')/f'source-{i}.b64').read_text().strip() for i in range(4)))
           assert hashlib.sha256(b).hexdigest()=='6fc881afffbd5f48290e802859ded3eeed732f64753d7e7cf36e0392bab181f0'
           for name,text in json.loads(lzma.decompress(b)).items():
               assert '..' not in Path(name).parts
               p=Path('desktop')/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text,encoding='utf-8',newline='\n')
+          p=Path('desktop/launcher/platform_windows.go');s=p.read_text()
+          a='\t\tif r.Right-r.Left < 100 || r.Bottom-r.Top < 100 {\n\t\t\treturn 1\n\t\t}'
+          b='\t\tif r.Right-r.Left < 100 || r.Bottom-r.Top < 100 {\n\t\t\t// Minimized windows have a tiny iconic rectangle but remain recoverable.\n\t\t\ticonic, _, _ := user32.NewProc("IsIconic").Call(hwnd)\n\t\t\tif iconic == 0 { return 1 }\n\t\t}'
+          assert s.count(a)==1;p.write_text(s.replace(a,b),encoding='utf-8',newline='\n')
+          p=Path('desktop/launcher/platform_windows_test.go');s=p.read_text().replace('if !wins[0].Minimized {','if len(wins) == 0 || !wins[0].Minimized {').replace('if !wins[0].Visible || wins[0].Minimized {','if len(wins) == 0 || !wins[0].Visible || wins[0].Minimized {');p.write_text(s,encoding='utf-8',newline='\n')
+          subprocess.run(['gofmt','-w','desktop/launcher/platform_windows.go','desktop/launcher/platform_windows_test.go'],check=True)
           Path('output').mkdir(exist_ok=True)
       - uses: actions/download-artifact@v4
         with:
