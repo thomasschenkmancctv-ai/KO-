@@ -1,0 +1,102 @@
+name: Zombie Farm v0.13 native Windows launch QA
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-launchfix.yml', 'zombiefarm-launchfix/**']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Restore reviewed text sources only
+        shell: python
+        run: |
+          from pathlib import Path
+          import base64,lzma,hashlib,json
+          b=base64.b64decode(''.join((Path('zombiefarm-launchfix')/f'source-{i}.b64').read_text().strip() for i in range(4)))
+          assert hashlib.sha256(b).hexdigest()=='6fc881afffbd5f48290e802859ded3eeed732f64753d7e7cf36e0392bab181f0'
+          for name,text in json.loads(lzma.decompress(b)).items():
+              assert '..' not in Path(name).parts
+              p=Path('desktop')/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text,encoding='utf-8',newline='\n')
+          Path('output').mkdir(exist_ok=True)
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v012-Windows
+          run-id: 36310504063
+          github-token: ${{ github.token }}
+          path: runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-desktop-Windows
+          run-id: 36307453224
+          github-token: ${{ github.token }}
+          path: baseline
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-Windows-app-local-dependencies
+          run-id: 36309054353
+          github-token: ${{ github.token }}
+          path: crt
+      - name: Build complete offline EXE and native launcher tests
+        shell: pwsh
+        run: |
+          python -m pip install Pillow==11.3.0
+          python desktop/tools/ci_prepare.py
+          if ($LASTEXITCODE -ne 0) { throw 'package or native launcher test failed' }
+          Push-Location desktop
+          python -m unittest discover -s tests -v 2>&1 | Tee-Object ../output/content-tests.txt
+          if ($LASTEXITCODE -ne 0) { throw 'content tests failed' }
+          Pop-Location
+      - name: Test-only software OpenGL for hosted Windows VM
+        shell: pwsh
+        run: |
+          curl.exe --fail -L -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/25.1.6/mesa3d-25.1.6-release-msvc.7z
+          if ((Get-FileHash mesa.7z -Algorithm SHA256).Hash.ToLower() -ne '7b4dea5f4fdd362acaffd13f4dd01de3b1e3f67a24c89ab92957eeb8a404e23d') { throw 'Mesa integrity failure' }
+          7z x -omesa mesa.7z | Out-Null
+      - name: Run actual packaged Windows executable and capture real windows
+        shell: pwsh
+        run: |
+          python desktop/tools/windows_qa.py
+          if ($LASTEXITCODE -ne 0) { throw 'native packaged-game GUI test failed' }
+      - name: Preserve editable release content and diagnostic evidence
+        if: always()
+        shell: python
+        run: |
+          from pathlib import Path
+          import zipfile,hashlib,json,io
+          from PIL import Image
+          out=Path('output');out.mkdir(exist_ok=True)
+          with zipfile.ZipFile(out/'desktop-source-and-content.zip','w',zipfile.ZIP_DEFLATED) as z:
+              for folder in ['launcher','tools','tests','content']:
+                  for p in (Path('desktop')/folder).rglob('*'):
+                      if p.is_file() and p.name!='payload.zip' and '__pycache__' not in p.parts:
+                          assert p.suffix.lower() not in ('.ttf','.otf','.woff','.woff2')
+                          z.write(p,p.relative_to('desktop').as_posix())
+          rgba=Path('desktop/content/mods/textures-rgba.zip')
+          if rgba.exists():
+              hashes={}
+              with zipfile.ZipFile(rgba)as z:
+                  for n in z.namelist():
+                      im=Image.open(io.BytesIO(z.read(n))).convert('RGBA')
+                      hashes[n]={'size':im.size,'sha256_rgba':hashlib.sha256(im.tobytes()).hexdigest()}
+              (out/'normalized-pixel-hashes.json').write_text(json.dumps(hashes,indent=2))
+          for src in ['desktop/launcher/main.go','desktop/launcher/platform_windows.go','desktop/launcher/platform_windows_test.go']:
+              p=Path(src)
+              if p.exists(): (out/(p.name+'.sha256')).write_text(hashlib.sha256(p.read_bytes()).hexdigest())
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v013-native-Windows-tested
+          path: output/
+          retention-days: 3
