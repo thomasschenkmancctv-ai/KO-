@@ -25,4 +25,5 @@ replace('src/paths.rs',"pub fn user_data_base_path() -> Cow<'static, Path> {", "
 replace('src/window.rs','            // Virtual accelerometer','            if crate::desktop_mods::event(&event, &mut self.window) { continue; }\n\n            // Virtual accelerometer')
 replace('src/window.rs','    pub fn swap_window(&self) {\n        self.window.gl_swap_window();','    pub fn swap_window(&self) {\n        crate::desktop_mods::draw(&self.window);\n        self.window.gl_swap_window();')
 replace('src/window.rs','.position_centered()\n                .opengl()', '.position_centered()\n                .resizable()\n                .opengl()')
+replace('src/window.rs','        if !self.fullscreen && !Self::rotatable_fullscreen() {\n            return (0, 0, app_width, app_height);','        if !self.fullscreen && !Self::rotatable_fullscreen() && std::env::var_os("ZF_DESKTOP").is_none() {\n            return (0, 0, app_width, app_height);')
 print('Desktop extension integration applied; guest binary untouched')
