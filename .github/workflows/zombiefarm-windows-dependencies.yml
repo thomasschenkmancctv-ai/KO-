@@ -16,10 +16,9 @@ jobs:
           New-Item -ItemType Directory -Force output | Out-Null
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vs = & $vswhere -latest -property installationPath
-          $redist = Get-ChildItem "$vs\VC\Redist\MSVC" -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          $crt = Join-Path $redist.FullName 'x64\Microsoft.VC143.CRT'
-          if (!(Test-Path $crt)) { throw 'Microsoft redistributable directory not found' }
-          Copy-Item "$crt\*.dll" output
+          $dll = Get-ChildItem "$vs\VC\Redist\MSVC" -Recurse -Filter msvcp140.dll | Where-Object { $_.FullName -match '\\x64\\' -and $_.FullName -notmatch 'debug' } | Sort-Object FullName -Descending | Select-Object -First 1
+          if (!$dll) { throw 'Microsoft x64 redistributable not found' }
+          Copy-Item "$($dll.DirectoryName)\*.dll" output
           Get-FileHash output\*.dll -Algorithm SHA256 | Format-List | Out-File output\dependency-sha256.txt
           Get-ChildItem output
       - uses: actions/upload-artifact@v4
