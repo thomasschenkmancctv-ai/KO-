@@ -1,0 +1,136 @@
+name: Zombie Farm desktop build
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+permissions:
+  contents: read
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: never
+      CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+    steps:
+      - name: Get exact preserved runtime source
+        shell: bash
+        run: |
+          git clone --no-checkout https://github.com/H1W0XXX/touchHLE.git engine
+          cd engine
+          git checkout fa3d09511d471f505e41abed7c535e4dfbd7c59c
+          git submodule update --init --recursive
+          git rev-parse HEAD
+      - name: Cache compiled runtime
+        uses: actions/cache@v4
+        with:
+          path: |
+            engine/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: zf-desktop-${{ runner.os }}-fa3d095-v1
+      - name: Linux prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libboost-dev libasound2-dev libpulse-dev libudev-dev libx11-dev libxrandr-dev libxcursor-dev libxi-dev libxext-dev libxfixes-dev libxss-dev libxinerama-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev libglu1-mesa-dev xvfb xdotool scrot python3-pil
+          python3 -m pip install cmake==3.31.6
+      - name: Windows prerequisites
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          curl --fail -L --retry 2 -o boost.7z https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z
+          7z x -oengine/vendor boost.7z >/dev/null
+          mv engine/vendor/boost_1_81_0 engine/vendor/boost
+          python -m pip install cmake==3.31.6
+      - name: Compile actual runtime
+        shell: bash
+        run: |
+          cd engine
+          cargo build --release --locked --bin touchHLE
+      - name: Stage executable and original payload
+        shell: bash
+        run: |
+          mkdir -p output/screenshots output/reports
+          python - <<'PY'
+          from pathlib import Path
+          import os, shutil, json, hashlib, urllib.request, zipfile, plistlib, time
+          out=Path('output'); engine=Path('engine')
+          exe='touchHLE.exe' if os.name=='nt' else 'touchHLE'
+          shutil.copy2(engine/'target/release'/exe,out/exe)
+          for name in ('touchHLE_dylibs','touchHLE_fonts'):
+              if (engine/name).exists(): shutil.copytree(engine/name,out/name,dirs_exist_ok=True)
+          for p in engine.iterdir():
+              if p.is_file() and (p.name.lower().startswith(('license','copyright','touchhle_default_options')) or p.suffix.lower()=='.dll'):
+                  shutil.copy2(p,out/p.name)
+          url='https://archive.org/download/seychells-big-mega-.ipa-collection-ios-apps-and-games/iPod%20touch%202nd%20gen%208GB%20MC%20iPhone%20OS%203.1.3%20Apps%20.ipa%20Collection/Cracked/001-100/com.playforge.ZombieFarm-iOS3.0-%28Clutch-2.0.4%29.ipa'
+          ipa=out/'ZombieFarm_1.17.ipa'
+          status={'runtime_commit':'fa3d09511d471f505e41abed7c535e4dfbd7c59c','platform':os.name,'game_download':False,'gameplay_tested':False}
+          try:
+              req=urllib.request.Request(url,headers={'User-Agent':'ZombieFarmPersonalPreservation/0.12'})
+              with urllib.request.urlopen(req,timeout=60) as src, ipa.open('wb') as dst:
+                  total=0
+                  while True:
+                      chunk=src.read(1048576)
+                      if not chunk: break
+                      total+=len(chunk)
+                      if total>128*1024*1024: raise ValueError('Oversized archive')
+                      dst.write(chunk)
+              with zipfile.ZipFile(ipa) as z:
+                  bad=z.testzip()
+                  if bad: raise ValueError('Invalid archive CRC: '+bad)
+                  info=plistlib.loads(z.read('Payload/ZombieFarm.app/Info.plist'))
+                  version=info.get('CFBundleShortVersionString') or info.get('CFBundleVersion')
+                  if info.get('CFBundleIdentifier','').lower()!='com.playforge.zombiefarm' or str(version)!='1.17': raise ValueError('Wrong game identity/version')
+                  status.update(game_download=True,version=version,game_sha256=hashlib.sha256(ipa.read_bytes()).hexdigest(),archive_entries=len(z.infolist()))
+          except Exception as exc:
+              status['game_download_error']=str(exc)
+              if ipa.exists(): ipa.unlink()
+          (out/'reports/build.json').write_text(json.dumps(status,indent=2))
+          print(json.dumps(status,indent=2))
+          PY
+      - name: Real Linux startup capture
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cd output
+          chmod +x touchHLE
+          if test -f ZombieFarm_1.17.ipa; then
+            Xvfb :99 -screen 0 1280x960x24 +extension GLX +render -noreset >/tmp/zf-xvfb.log 2>&1 &
+            export DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 ALSOFT_DRIVERS=null
+            sleep 2
+            ./touchHLE ZombieFarm_1.17.ipa >reports/gameplay-startup.log 2>&1 &
+            PID=$!
+            sleep 20
+            scrot screenshots/startup-linux.png
+            kill -0 "$PID" 2>/dev/null && echo RUNNING > reports/process-alive.txt || true
+            kill "$PID" 2>/dev/null || true
+          fi
+      - name: Capture source and build diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p output/reports
+          (cd engine && git status --short && rustc --version && cargo --version && cmake --version) >output/reports/toolchain.txt 2>&1 || true
+          python - <<'PY'
+          import pathlib, zipfile
+          root=pathlib.Path('engine')
+          with zipfile.ZipFile('output/runtime-source.zip','w',zipfile.ZIP_DEFLATED) as z:
+              for base in ('src','dev-scripts','dev-docs'):
+                  for p in (root/base).rglob('*'):
+                      if p.is_file(): z.write(p,str(p.relative_to(root)))
+              for name in ('Cargo.toml','Cargo.lock','build.rs','.gitmodules','README.md','LICENSE','LICENSE.md'):
+                  p=root/name
+                  if p.is_file(): z.write(p,name)
+          PY
+      - name: Downloadable build and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZombieFarm-desktop-${{ runner.os }}
+          path: output/
+          retention-days: 3
+          if-no-files-found: error
