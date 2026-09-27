@@ -1,0 +1,29 @@
+name: Zombie Farm Windows dependencies
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-windows-dependencies.yml']
+permissions:
+  contents: read
+jobs:
+  dependencies:
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - name: Collect app-local Visual C++ runtime
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force output | Out-Null
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          $redist = Get-ChildItem "$vs\VC\Redist\MSVC" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          $crt = Join-Path $redist.FullName 'x64\Microsoft.VC143.CRT'
+          if (!(Test-Path $crt)) { throw 'Microsoft redistributable directory not found' }
+          Copy-Item "$crt\*.dll" output
+          Get-FileHash output\*.dll -Algorithm SHA256 | Format-List | Out-File output\dependency-sha256.txt
+          Get-ChildItem output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZombieFarm-Windows-app-local-dependencies
+          path: output/
+          retention-days: 3
