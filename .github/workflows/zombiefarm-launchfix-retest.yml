@@ -1,0 +1,74 @@
+name: Zombie Farm v0.13 packaged Windows verification
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-launchfix-retest.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v013-native-Windows-tested
+          run-id: 36314049447
+          github-token: ${{ github.token }}
+          path: output
+      - name: Prepare same executable and explicit VM-only graphics configuration
+        shell: python
+        run: |
+          from pathlib import Path
+          import zipfile,hashlib,shutil
+          out=Path('output')
+          assert hashlib.sha256((out/'Zombie_Farm_Windows_v0.13.exe').read_bytes()).hexdigest()=='f89dc2bef9068469bf755a1557b755040c448c920f19f6b213af82f84a697e5b'
+          for n in ['screenshots','native-windows-logs']:
+              if (out/n).exists():shutil.rmtree(out/n)
+          for n in ['windows-qa-error.txt','windows-gui-qa.json','tested-executable-sha256.txt']:
+              (out/n).unlink(missing_ok=True)
+          with zipfile.ZipFile(out/'desktop-source-and-content.zip')as z:z.extractall('desktop')
+          p=Path('desktop/tools/windows_qa.py');s=p.read_text()
+          a="for f in mesa.glob('*.dll'):shutil.copy2(f,d/f.name)"
+          b=a+"\n (home/'UserData/touchHLE_options.txt').write_text('com.playforge.ZombieFarm: --gles1=gles1_on_gl2\\n')"
+          assert s.count(a)==1;s=s.replace(a,b)
+          s=s.replace("if status.get('status')=='visible':break","if status.get('status')=='visible':break\n   raise RuntimeError('runtime startup failure: '+str(status))")
+          s=s.replace("checks.append(dict(test=name,passed=bool(cond),details=details))","checks.append(dict(test=name,passed=bool(cond),details=details))\n print(name, bool(cond), flush=True)")
+          p.write_text(s,encoding='utf-8',newline='\n')
+          (out/'test-environment.txt').write_text('Native Windows Server 2022 x64. Exact v0.13 EXE from build run 36314049447.\nGo Win32 regression tests passed in that build.\nHosted VM uses test-only Mesa 25.1.6 llvmpipe and --gles1=gles1_on_gl2 in isolated QA settings.\nThese driver DLLs/settings are not embedded in or distributed with the game EXE.\n')
+      - name: Test-only software OpenGL for hosted Windows VM
+        shell: pwsh
+        run: |
+          python -m pip install Pillow==11.3.0
+          curl.exe --fail -L -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/25.1.6/mesa3d-25.1.6-release-msvc.7z
+          if ((Get-FileHash mesa.7z -Algorithm SHA256).Hash.ToLower() -ne '7b4dea5f4fdd362acaffd13f4dd01de3b1e3f67a24c89ab92957eeb8a404e23d') { throw 'Mesa integrity failure' }
+          7z x -omesa mesa.7z | Out-Null
+      - name: Execute and visually capture actual packaged Windows game
+        shell: pwsh
+        run: |
+          python desktop/tools/windows_qa.py
+          if ($LASTEXITCODE -ne 0) { throw 'native packaged-game GUI test failed' }
+      - name: Preserve exact test source
+        if: always()
+        shell: python
+        run: |
+          from pathlib import Path
+          import zipfile,shutil
+          out=Path('output')
+          shutil.copy2('desktop/tools/windows_qa.py',out/'windows_qa.py')
+          with zipfile.ZipFile(out/'desktop-source-and-content.zip','w',zipfile.ZIP_DEFLATED)as z:
+              for p in Path('desktop').rglob('*'):
+                  if p.is_file() and '__pycache__' not in p.parts:
+                      assert p.suffix.lower() not in ('.ttf','.otf','.woff','.woff2')
+                      z.write(p,p.relative_to('desktop').as_posix())
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v013-packaged-Windows-verification
+          path: output/
+          retention-days: 3
