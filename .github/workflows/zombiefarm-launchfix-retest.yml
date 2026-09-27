@@ -39,8 +39,15 @@ jobs:
           assert s.count(a)==1;s=s.replace(a,b)
           s=s.replace("if status.get('status')=='visible':break","if status.get('status')=='visible':break\n   raise RuntimeError('runtime startup failure: '+str(status))")
           s=s.replace("checks.append(dict(test=name,passed=bool(cond),details=details))","checks.append(dict(test=name,passed=bool(cond),details=details))\n print(name, bool(cond), flush=True)")
+          a="u.SetForegroundWindow(window()['handle']);time.sleep(.1);u.keybd_event(code,0,0,0);time.sleep(.1);u.keybd_event(code,0,2,0)"
+          b="h=window()['handle'];u.SetForegroundWindow(h);time.sleep(.1);scan=u.MapVirtualKeyW(code,0);u.PostMessageW(h,0x100,code,1|(scan<<16));time.sleep(.15);u.PostMessageW(h,0x101,code,0xc0000001|(scan<<16))"
+          assert s.count(a)==1;s=s.replace(a,b)
+          s=s.replace("click(.50,.92);time.sleep(12)","click(.50,.55);time.sleep(18)")
+          a="key(0x79);time.sleep(2);w=window();check('fullscreen_window_visible',w['visible'] and not w['minimized'],w);capture('06-windows-fullscreen.png');key(0x79);time.sleep(1)"
+          b="before_full=window()['rect'];key(0x79);time.sleep(2);w=window();check('fullscreen_geometry_and_visibility',w['visible'] and not w['minimized'] and w['rect']!=before_full,{'before':before_full,'after':w});capture('06-windows-fullscreen.png');key(0x79);time.sleep(1);check('windowed_geometry_restored',window()['rect']==before_full,window())"
+          assert s.count(a)==1;s=s.replace(a,b)
           p.write_text(s,encoding='utf-8',newline='\n')
-          (out/'test-environment.txt').write_text('Native Windows Server 2022 x64. Exact v0.13 EXE from build run 36314049447.\nGo Win32 regression tests passed in that build.\nHosted VM uses test-only Mesa 25.1.6 llvmpipe and --gles1=gles1_on_gl2 in isolated QA settings.\nThese driver DLLs/settings are not embedded in or distributed with the game EXE.\n')
+          (out/'test-environment.txt').write_text('Native Windows Server 2022 x64. Exact v0.13 EXE from build run 36314049447.\nGo Win32 regression tests passed in that build.\nHosted VM uses test-only Mesa 25.1.6 llvmpipe and --gles1=gles1_on_gl2 in isolated QA settings.\nThese driver DLLs/settings are not embedded in or distributed with the game EXE.\nNative key messages include scan codes; fullscreen is checked by actual geometry change, not just visibility.\n')
       - name: Test-only software OpenGL for hosted Windows VM
         shell: pwsh
         run: |
