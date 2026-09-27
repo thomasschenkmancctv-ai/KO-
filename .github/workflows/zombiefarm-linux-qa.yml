@@ -1,0 +1,56 @@
+name: Zombie Farm Linux runtime QA
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-linux-qa.yml']
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Exact engine
+        run: |
+          git clone --no-checkout https://github.com/H1W0XXX/touchHLE.git engine
+          cd engine
+          git checkout fa3d09511d471f505e41abed7c535e4dfbd7c59c
+          git submodule update --init --recursive
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            engine/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: zf-linux-build2
+      - name: Native prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libsndio-dev libboost-dev libasound2-dev libpulse-dev libudev-dev libx11-dev libxrandr-dev libxcursor-dev libxi-dev libxext-dev libxfixes-dev libxss-dev libxinerama-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev libglu1-mesa-dev xvfb xdotool scrot
+          python3 -m pip install cmake==3.31.6
+      - name: Compile
+        run: |
+          cd engine
+          cargo build --release --locked --bin touchHLE
+      - name: Portable QA runtime
+        run: |
+          mkdir -p output/lib
+          cp engine/target/release/touchHLE output/
+          cp -r engine/touchHLE_dylibs engine/touchHLE_fonts output/
+          cp engine/touchHLE_default_options.txt engine/LICENSE output/
+          ldd output/touchHLE > output/dependencies.txt
+          cp -L /usr/lib/x86_64-linux-gnu/libsndio.so.* output/lib/ || true
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            engine/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: zf-linux-build2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-Linux-QA-runtime
+          path: output/
+          retention-days: 3
