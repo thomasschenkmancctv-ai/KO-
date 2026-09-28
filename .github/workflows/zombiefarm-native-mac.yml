@@ -1,0 +1,94 @@
+name: Zombie Farm native Mac compatibility build
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-native-mac.yml','zombiefarm-native-mac/**']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  mac:
+    runs-on: macos-14
+    timeout-minutes: 18
+    env:
+      CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+      CARGO_TERM_COLOR: never
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v015-Windows
+          run-id: 36401541719
+          github-token: ${{ github.token }}
+          path: baseline
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v0151-Windows-hotfix
+          run-id: 36429378577
+          github-token: ${{ github.token }}
+          path: hotfix
+      - name: Exact preserved original source and dependencies
+        run: |
+          git clone --no-checkout https://github.com/H1W0XXX/touchHLE.git engine
+          cd engine
+          git checkout fa3d09511d471f505e41abed7c535e4dfbd7c59c
+          git submodule update --init --recursive
+          cd ..
+          python - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('baseline/runtime-source.zip')as z:z.extractall('engine')
+          PY
+          brew install boost || true
+          python -m pip install cmake==3.31.6 pyobjc-framework-Quartz Pillow
+          rustc --version
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            engine/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: zf-native-mac-${{ github.run_id }}
+          restore-keys: zf-native-mac-
+      - name: Compile original game runtime for ARM64 macOS
+        run: |
+          mkdir -p native-output
+          cd engine
+          cargo build --release --locked --bin touchHLE 2>&1 | tee ../native-output/build.log
+      - name: Package native app and run actual macOS GUI
+        run: python zombiefarm-native-mac/package_and_test.py
+      - name: Preserve build evidence
+        if: always()
+        run: |
+          mkdir -p native-output
+          cp zombiefarm-native-mac/package_and_test.py native-output/
+          sw_vers > native-output/build-host.txt
+          uname -m >> native-output/build-host.txt
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            engine/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: zf-native-mac-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v0152-native-mac
+          path: |
+            native-output/*.zip
+            native-output/*.json
+            native-output/*.txt
+            native-output/*.log
+            native-output/*.py
+            native-output/logs/
+            native-output/screenshots/
+          retention-days: 14
