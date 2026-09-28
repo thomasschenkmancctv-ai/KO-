@@ -22,8 +22,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for i in $(seq 1 60); do
-            n=$(gh api repos/thomasschenkmancctv-ai/KO-/actions/runs/36470178865/artifacts --jq '[.artifacts[] | select(.name=="ZombieFarm-v016-Windows")] | length')
+          for i in $(seq 1 90); do
+            n=$(gh api repos/thomasschenkmancctv-ai/KO-/actions/runs/36470694971/artifacts --jq '[.artifacts[] | select(.name=="ZombieFarm-v016-Windows" and .size_in_bytes>10000000)] | length')
             if [ "$n" = 1 ]; then exit 0; fi
             sleep 5
           done
@@ -31,7 +31,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ZombieFarm-v016-Windows
-          run-id: 36470178865
+          run-id: 36470694971
           github-token: ${{ github.token }}
           path: build
       - name: Execute real sandbox controls and save reload
