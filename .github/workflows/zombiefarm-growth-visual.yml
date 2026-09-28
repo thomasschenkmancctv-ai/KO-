@@ -28,7 +28,7 @@ jobs:
           curl.exe --fail -L -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/25.1.6/mesa3d-25.1.6-release-msvc.7z
           if ((Get-FileHash mesa.7z -Algorithm SHA256).Hash.ToLower() -ne '7b4dea5f4fdd362acaffd13f4dd01de3b1e3f67a24c89ab92957eeb8a404e23d') { throw 'Mesa integrity failure' }
           7z x -omesa mesa.7z | Out-Null
-      - name: Drive original visible farm and manual harvest with frame-safe mouse events
+      - name: Drive original visible farm and manual harvest with paired window messages
         shell: python
         run: |
           from pathlib import Path
@@ -48,10 +48,11 @@ jobs:
           for p in Path('mesa/x64').glob('*.dll'):shutil.copy2(p,runtime/p.name)
           (data/'touchHLE_options.txt').write_text('com.playforge.ZombieFarm: --gles1=gles1_on_gl2\n')
           sys.path.insert(0,str(Path('desktop/tools').resolve()));import growth_regression as q
-          def slow_mouse(x,y):
-              q.u.SetForegroundWindow(q.geom()[0]);q.u.SetCursorPos(int(x),int(y));time.sleep(.3)
-              q.u.mouse_event(2,0,0,0,0);time.sleep(.7);q.u.mouse_event(4,0,0,0,0);time.sleep(.5)
-          q.mouse=slow_mouse
+          def paired_mouse(x,y):
+              h,wx,wy,w,hh=q.geom();q.u.SetForegroundWindow(h);q.u.SetCursorPos(int(x),int(y));time.sleep(.25)
+              xy=((int(y-wy)&65535)<<16)|(int(x-wx)&65535)
+              q.u.PostMessageW(h,0x200,0,xy);q.u.PostMessageW(h,0x201,1,xy);time.sleep(.5);q.u.PostMessageW(h,0x202,0,xy);time.sleep(.5)
+          q.mouse=paired_mouse
           proc=subprocess.Popen([str(exe)],env=os.environ.copy())
           try:
               time.sleep(18);q.game_click(.5,.55);time.sleep(8);q.shot('01-before-daily-reward.png')
