@@ -1,0 +1,192 @@
+name: Zombie Farm off-screen Mac repair
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-offscreen.yml','zombiefarm-offscreen/**']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 18
+    env:
+      CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+      CARGO_TERM_COLOR: never
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v015-Windows
+          run-id: 36401541719
+          github-token: ${{ github.token }}
+          path: baseline
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v0151-Windows-hotfix
+          run-id: 36429378577
+          github-token: ${{ github.token }}
+          path: hotfix
+      - name: Restore pinned runtime
+        shell: bash
+        run: |
+          git clone --no-checkout https://github.com/H1W0XXX/touchHLE.git engine
+          cd engine
+          git checkout fa3d09511d471f505e41abed7c535e4dfbd7c59c
+          git submodule update --init --recursive
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            engine/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: zf-offscreen-${{ github.run_id }}
+          restore-keys: |
+            zf-menu-Windows-
+            zf-growth-Windows-
+            zf-desktop-Windows-v012-
+      - name: Build dependencies and pinned off-screen driver
+        shell: bash
+        run: |
+          python -m pip install cmake==3.31.6 Pillow==11.3.0
+          curl --fail -L --retry 2 -o boost.7z https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z
+          7z x -oengine/vendor boost.7z >/dev/null
+          mv engine/vendor/boost_1_81_0 engine/vendor/boost
+          curl --fail -L --retry 2 -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/25.0.7/mesa3d-25.0.7-release-msvc.7z
+          7z x -omesa mesa.7z >/dev/null
+      - name: Compile one targeted runtime change
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p output/reports
+          python zombiefarm-offscreen/apply.py
+          rustfmt --edition 2021 engine/src/software_gl.rs engine/src/window.rs
+          cd engine
+          cargo build --release --locked --bin touchHLE 2>&1 | tee ../output/reports/build.log
+          cargo test --release --locked --lib software_gl::tests 2>&1 | tee ../output/reports/graphics-tests.log
+          cargo test --release --locked --lib desktop_mods::tests 2>&1 | tee ../output/reports/desktop-tests.log
+          cargo test --release --locked --lib zombie_growth::tests 2>&1 | tee ../output/reports/growth-tests.log
+          cargo test --release --locked --lib farm_menu::tests 2>&1 | tee ../output/reports/menu-tests.log
+      - name: Package automatic Wine compatibility with original content
+        shell: python
+        run: |
+          from pathlib import Path
+          import zipfile,shutil,hashlib,json,subprocess,sys
+          out=Path('output').resolve();root=Path('desktop').resolve()
+          with zipfile.ZipFile('baseline/desktop-source-and-content.zip')as z:z.extractall(root)
+          with zipfile.ZipFile('hotfix/desktop-hotfix-source.zip')as z:z.extractall(root)
+          p=root/'launcher/main.go';s=p.read_text().replace('0.15.1','0.15.3').replace('f.UncompressedSize64 > 128<<20','f.UncompressedSize64 > 256<<20')
+          s=s.replace('Graphics: desktop OpenGL 2.1 compatibility (gles1_on_gl2); native OpenGL ES probing bypassed.','Graphics: automatic Wine detection; OSMesa off-screen on Wine, desktop OpenGL otherwise.')
+          p.write_text(s)
+          p=root/'tools/package.py';p.write_text(p.read_text().replace('0.15.1','0.15.3'))
+          (root/'launcher/wine_windows.go').write_text('package main\nimport "syscall"\nfunc usesWine() bool { return syscall.NewLazyDLL("ntdll.dll").NewProc("wine_get_version").Find() == nil }\n')
+          (root/'launcher/wine_linux.go').write_text('package main\nfunc usesWine() bool { return false }\n')
+          p=root/'launcher/graphics.go';s=p.read_text()
+          a='cmd.Env = append(clean, "SDL_OPENGL_ES_DRIVER=0")';assert s.count(a)==1
+          s=s.replace(a,a+'\n if usesWine() { cmd.Env = append(cmd.Env,"ZF_SOFTWARE_GL=1","GALLIUM_DRIVER=llvmpipe","LP_NUM_THREADS=2","LP_NATIVE_VECTOR_WIDTH=128","SDL_FRAMEBUFFER_ACCELERATION=0") }')
+          p.write_text(s)
+          compat=root/'content/compat';compat.mkdir(exist_ok=True)
+          assert Path('mesa.7z').stat().st_size==68184937
+          shutil.copy2('mesa/x64/osmesa.dll',compat/'osmesa.dll')
+          for n in ['libglapi.dll']:
+              if Path('mesa/x64',n).exists():shutil.copy2(Path('mesa/x64',n),compat/n)
+          for f in Path('mesa').rglob('*'):
+              if f.is_file() and (f.name.lower().startswith(('license','copying')) or 'licenses' in f.parts):
+                  dest=compat/'licenses'/f.relative_to('mesa');dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(f,dest)
+          (compat/'PROVENANCE.txt').write_text('OSMesa 25.0.7 x64 MSVC off-screen driver. Source: https://github.com/pal1000/mesa-dist-win/releases/tag/25.0.7\nArchive SHA256: '+hashlib.sha256(Path('mesa.7z').read_bytes()).hexdigest()+'\nCPU rendering; no host OpenGL/EGL/WGL dependency for display. No system files or registry replaced.\n')
+          shutil.copytree('baseline/runtime','runtime',dirs_exist_ok=True);shutil.copy2('engine/target/release/touchHLE.exe','runtime/touchHLE.exe')
+          subprocess.run(['gofmt','-w',str(root/'launcher')],check=True)
+          subprocess.run([sys.executable,str(root/'tools/package.py'),'--runtime',str(Path('runtime').resolve()),'--platform','windows','--out',str(out)],check=True)
+          prior=json.loads(Path('hotfix/windows-manifest.json').read_text());new=json.loads((out/'windows-manifest.json').read_text())
+          keys=[n for n in prior['files']if n.startswith('Game/')];assert all(prior['files'][n]==new['files'][n]for n in keys)
+          (out/'preservation.json').write_text(json.dumps({'original_files_unchanged':len(keys),'changed_runtime':'window context and frame presentation only','original_runtime_build':'36401541719','software_driver':'OSMesa 25.0.7','wine_auto_detect':True},indent=2))
+          with zipfile.ZipFile(out/'desktop-source-and-content.zip','w',zipfile.ZIP_DEFLATED)as z:
+              for folder in ['launcher','tools','tests','content']:
+                  for f in(root/folder).rglob('*'):
+                      if f.is_file()and f.name!='payload.zip'and '__pycache__'not in f.parts:
+                          assert f.suffix.lower()not in('.ttf','.otf','.woff','.woff2');z.write(f,f.relative_to(root).as_posix())
+          with zipfile.ZipFile(out/'runtime-source.zip','w',zipfile.ZIP_DEFLATED)as z:
+              for folder in ['src','dev-scripts','dev-docs']:
+                  for f in(Path('engine')/folder).rglob('*'):
+                      if f.is_file():z.write(f,f.relative_to('engine').as_posix())
+              for n in ['Cargo.toml','Cargo.lock','build.rs','.gitmodules','README.md','LICENSE']:z.write(Path('engine')/n,n)
+          shutil.copytree('runtime',out/'runtime',dirs_exist_ok=True)
+          s=Path('hotfix/windows_qa.py').read_text().replace('0.15.1','0.15.3')
+          a=s.index(' # A hosted VM lacks a physical OpenGL GPU.');b=s.index(" (home/'UserData/touchHLE_options.txt').write_text",a)
+          s=s[:a]+" # The renderer comes exclusively from the actual package.\n"+s[b:]
+          (out/'windows_qa.py').write_text(s)
+      - name: Actual Windows GUI regression using embedded off-screen renderer
+        shell: pwsh
+        env:
+          ZF_SOFTWARE_GL: '1'
+          GALLIUM_DRIVER: llvmpipe
+          LP_NUM_THREADS: '2'
+          LP_NATIVE_VECTOR_WIDTH: '128'
+        run: |
+          python output/windows_qa.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows GUI regression failed' }
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            engine/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: zf-menu-Windows-offscreen-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v0153-Windows
+          path: output/
+          retention-days: 14
+  mac:
+    needs: windows
+    runs-on: macos-14
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v0153-Windows
+          path: build
+      - name: Pinned Mac Wine test environment
+        run: |
+          softwareupdate --install-rosetta --agree-to-license || true
+          curl --fail -L -o wine.tar.xz https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.18/wine-devel-11.18-osx64.tar.xz
+          echo 'aa0ea4c82e636ae7bca2076387cb0a5affa26509ad13f119ecd0d62bd7ba6f82  wine.tar.xz' | shasum -a 256 -c -
+          mkdir wine-dist
+          tar -xf wine.tar.xz -C wine-dist
+          python -m pip install pyobjc-framework-Quartz Pillow
+      - name: Actual Windows EXE on Apple Silicon, automatic Wine detection
+        shell: python
+        run: |
+          from pathlib import Path
+          import runpy
+          p=Path('zombiefarm-mac-qa/mac_qa.py');s=p.read_text().replace('0.15.2','0.15.3')
+          s=s.replace('shutil.copy2(src,fonts/','shutil.copyfile(src,fonts/')
+          s=s.replace("'Driver info:' in text and 'llvmpipe' in text and 'Mesa 25.1.6' in text", "'Driver info:' in text and 'OSMesa off-screen context active' in text and 'llvmpipe' in text")
+          s=s.replace("'bundled_graphics_context_on_mac'","'offscreen_graphics_context_on_mac'")
+          p.write_text(s)
+          runpy.run_path(str(p),run_name='__main__')
+      - name: Preserve Mac evidence
+        if: always()
+        run: |
+          mkdir -p mac-evidence
+          cp zombiefarm-mac-qa/mac_qa.py mac-evidence/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v0153-Mac-QA
+          path: mac-evidence/
+          retention-days: 14
