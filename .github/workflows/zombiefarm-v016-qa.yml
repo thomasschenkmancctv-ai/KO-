@@ -23,7 +23,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           for i in $(seq 1 90); do
-            n=$(gh api repos/thomasschenkmancctv-ai/KO-/actions/runs/36470694971/artifacts --jq '[.artifacts[] | select(.name=="ZombieFarm-v016-Windows" and .size_in_bytes>10000000)] | length')
+            n=$(gh api repos/thomasschenkmancctv-ai/KO-/actions/runs/36472016952/artifacts --jq '[.artifacts[] | select(.name=="ZombieFarm-v016-Windows" and .size_in_bytes>10000000)] | length')
             if [ "$n" = 1 ]; then exit 0; fi
             sleep 5
           done
@@ -31,9 +31,18 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ZombieFarm-v016-Windows
-          run-id: 36470694971
+          run-id: 36472016952
           github-token: ${{ github.token }}
           path: build
+      - name: Enforce post-reload live simulation soak
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('zombiefarm-v016-sandbox/qa.py');s=p.read_text()
+          a="q.shot('05-reloaded-original-game.png')"
+          assert s.count(a)==1
+          s=s.replace(a,a+"\n last=q.state()['wall_seconds'];q.wait(lambda s:s['wall_seconds']>last+8,timeout=18);q.check('leveled_up_reload_remains_live',True);q.shot('06-reload-soak.png')")
+          p.write_text(s)
       - name: Execute real sandbox controls and save reload
         shell: pwsh
         run: |
@@ -49,7 +58,7 @@ jobs:
           out=Path('evidence');out.mkdir(exist_ok=True)
           for f in ['gameplay-test.log','zombiefarm-v016-sandbox/qa.py']:
               if Path(f).exists():shutil.copy2(f,out/Path(f).name)
-          (out/'test-scope.txt').write_text('Native Windows Server 2022 x64. Exact packaged Windows EXE. Embedded OSMesa renderer forced for compatibility-path coverage, no external driver installed. Isolated developer farm only; every XP action and toggle sent through production mouse controls. Growth matrix uses original-game tiles. No claims about all physical GPUs.\n')
+          (out/'test-scope.txt').write_text('Native Windows Server 2022 x64. Exact packaged Windows EXE. Embedded OSMesa renderer forced for compatibility-path coverage, no external driver installed. Isolated developer farm only; every XP action and toggle sent through production mouse controls. Growth matrix uses original-game tiles. Continued guest simulation required after reload, not only a living host process.\n')
       - uses: actions/upload-artifact@v4
         if: always()
         with:
