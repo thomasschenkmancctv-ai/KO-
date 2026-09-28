@@ -27,8 +27,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for i in $(seq 1 40); do
-            count=$(gh api repos/thomasschenkmancctv-ai/KO-/actions/runs/36437877132/artifacts --jq '[.artifacts[] | select(.name=="ZombieFarm-v0152-Windows")] | length')
+          for i in $(seq 1 50); do
+            count=$(gh api repos/thomasschenkmancctv-ai/KO-/actions/runs/36438744572/artifacts --jq '[.artifacts[] | select(.name=="ZombieFarm-v0152-Windows")] | length')
             if [ "$count" = '1' ]; then exit 0; fi
             sleep 5
           done
@@ -36,7 +36,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ZombieFarm-v0152-Windows
-          run-id: 36437877132
+          run-id: 36438744572
           github-token: ${{ github.token }}
           path: build
       - name: Run actual Windows EXE on Apple Silicon and capture frames
