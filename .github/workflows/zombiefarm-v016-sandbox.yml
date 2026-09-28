@@ -2,7 +2,7 @@ name: Zombie Farm v0.16 growth XP and performance
 on:
   push:
     branches: [zombiefarm-windows-v012-build]
-    paths: ['.github/workflows/zombiefarm-v016-sandbox.yml','zombiefarm-v016-sandbox/apply.py','zombiefarm-v016-sandbox/sandbox_rewards.rs']
+    paths: ['.github/workflows/zombiefarm-v016-sandbox.yml','zombiefarm-v016-sandbox/apply.py','zombiefarm-v016-sandbox/sandbox_rewards.rs','zombiefarm-v016-sandbox/terminal_fix.py']
 permissions:
   contents: read
   actions: read
@@ -76,6 +76,7 @@ jobs:
           set -o pipefail
           mkdir -p output/reports
           python zombiefarm-v016-sandbox/apply.py
+          python zombiefarm-v016-sandbox/terminal_fix.py
           rustfmt --edition 2021 engine/src/sandbox_rewards.rs engine/src/zombie_growth.rs engine/src/desktop_mods.rs engine/src/farm_menu.rs
           cd engine
           cargo build --release --locked --bin touchHLE 2>&1 | tee ../output/reports/build.log
@@ -95,10 +96,6 @@ jobs:
           shutil.copytree('baseline/runtime' if os.name=='nt' else 'linux-old/runtime',runtime,dirs_exist_ok=True)
           exe='touchHLE.exe' if os.name=='nt' else 'touchHLE'
           shutil.copy2(Path('engine/target/release')/exe,runtime/exe)
-          if os.name!='nt':
-              for name in ['graphics.go','graphics_test.go']:
-                  # Linux retains identical SDL/GL game code; only Wine detection is false.
-                  pass
           subprocess.run([sys.executable,str(root/'tools/package.py'),'--runtime',str(runtime),'--platform','windows' if os.name=='nt' else 'linux','--out',str(out)],check=True)
           subprocess.run([sys.executable,'-m','unittest','discover','-s',str(root/'tests'),'-v'],cwd=root,check=True)
           before=json.loads(Path('baseline/windows-manifest.json').read_text())
