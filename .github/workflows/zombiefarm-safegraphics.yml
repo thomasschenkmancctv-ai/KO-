@@ -1,0 +1,110 @@
+name: Zombie Farm bundled graphics v0.15.2
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-safegraphics.yml', 'zombiefarm-safegraphics/**']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 12
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v015-Windows
+          run-id: 36401541719
+          github-token: ${{ github.token }}
+          path: baseline
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v0151-Windows-hotfix
+          run-id: 36429378577
+          github-token: ${{ github.token }}
+          path: hotfix
+      - name: Get pinned graphics source distribution
+        shell: pwsh
+        run: |
+          python -m pip install Pillow==11.3.0
+          curl.exe --fail -L -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/25.1.6/mesa3d-25.1.6-release-msvc.7z
+          if ((Get-FileHash mesa.7z -Algorithm SHA256).Hash.ToLower() -ne '7b4dea5f4fdd362acaffd13f4dd01de3b1e3f67a24c89ab92957eeb8a404e23d') { throw 'Mesa integrity failure' }
+          7z x -omesa mesa.7z | Out-Null
+      - name: Compile and package genuine offline renderer
+        shell: pwsh
+        run: |
+          python zombiefarm-safegraphics/prepare.py
+          if ($LASTEXITCODE -ne 0) { throw 'Build or native launcher tests failed' }
+      - name: Actual Windows EXE with only embedded renderer
+        shell: pwsh
+        env:
+          ZF_SKIP_START_MENU: '1'
+        run: |
+          python output/windows_qa.py
+          if ($LASTEXITCODE -ne 0) { throw 'Actual Windows GUI regression failed' }
+      - name: Preserve build inputs
+        if: always()
+        shell: python
+        run: |
+          from pathlib import Path
+          import shutil
+          p=Path('output');p.mkdir(exist_ok=True)
+          shutil.copytree('zombiefarm-safegraphics',p/'build-scripts',dirs_exist_ok=True)
+          (p/'TEST-SCOPE.txt').write_text('Exact Windows EXE with bundled Mesa CPU graphics. No test-only graphics DLL or renderer option injection. Windows Server 2022 test is not a physical Mac/Whisky test. No post-invasion fix is claimed.\n')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v0152-Windows
+          path: output/
+          retention-days: 14
+  wine:
+    needs: windows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v0152-Windows
+          path: output
+      - name: Isolated Wine test environment
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends wine wine64 fonts-liberation xvfb xauth xdotool python3-pil
+      - name: Prepare exact EXE tests, no renderer injection
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('zombiefarm-whisky/wine_qa.py');s=p.read_text().replace('0.15.1','0.15.2')
+          s=s.replace("'--name','^ZombieFarm$'", "'--name','Zombie.?Farm|ZombieFarm'")
+          s=s.replace("Path('/usr/share/fonts/truetype/liberation2')/f'Liberation{family}-{style}.ttf'", "next(Path('/usr/share/fonts').rglob(f'Liberation{family}-{style}.ttf'))")
+          s=s.replace("WINEDLLOVERRIDES='mscoree,mshtml='", "WINEDLLOVERRIDES='mscoree,mshtml=;opengl32=b'")
+          a="check('saved_native_option_untouched'"
+          idx=s.index(a)
+          s=s[:idx]+"check('bundled_cpu_renderer_confirmed','llvmpipe' in text and 'Mesa 25.1.6' in text,text[:3000])\n "+s[idx:]
+          Path('output/wine_qa.py').write_text(s)
+      - name: Exact Windows game under Wine
+        run: |
+          xvfb-run -a -s '-screen 0 1440x1000x24 +extension GLX +render -noreset' /usr/bin/python3 output/wine_qa.py
+      - name: Preserve test scope
+        if: always()
+        run: |
+          echo 'Wine 9 Ubuntu 24.04; shipped Windows EXE and embedded Mesa only. Conflicting native GLES preference and Wine OpenGL override were intentionally supplied to verify child-only correction. Not a macOS Whisky test.' >output/wine-test-scope.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v0152-Wine-QA
+          path: |
+            output/wine-*
+            output/wine_qa.py
+          retention-days: 14
