@@ -1,4 +1,4 @@
-"""v0.16 production UI + original-game crop/XP/save regression in isolated saves."""
+"""Production UI and original-game crop/XP/save regression in isolated saves."""
 from pathlib import Path
 import os,sys,json,subprocess,base64,zlib,time,zipfile,hashlib,traceback,plistlib,shutil
 ROOT=Path(os.environ.get('ZF_QA_ROOT','.')).resolve(); BUILD=ROOT/'build';OUT=ROOT/'evidence';OUT.mkdir(exist_ok=True)
@@ -48,7 +48,7 @@ try:
  initial=q.state();xp0=initial['xp'];q.menu();q.panel(190,310);time.sleep(.4);q.check('xp_blocked_with_sandbox_off',q.state()['xp']==xp0)
  q.toggle('sandbox',True);instant(False)
  roots=list(dict.fromkeys(q.coord(t)for t in q.state()['tiles']if t['key'].startswith('soil_')))[:6];q.check('existing_roots_available',len(roots)>=6,roots)
- seedrows=[row(roots[0],'soil_seeded_carrots'),row(roots[1],'soil_germinating_tomatoes'),row(roots[2],'soil_seedling_zombie')]
+ seedrows=[row(roots[0],'soil_seeded_carrots'),row(roots[1],'soil_seedling_tomatoes'),row(roots[2],'soil_seedling_zombie')]
  fixture(seedrows);q.check('off_keeps_all_three_immature',all(not q.at(q.state(),p)['ready']for p in roots[:3]))
  prior=q.state();instant(True);done=q.wait(lambda s:all(q.at(s,p)['ready']for p in roots[:3]));q.check('existing_plant_crop_zombie_ready',True,[q.at(done,p)for p in roots[:3]])
  q.check('growth_does_not_spawn_or_harvest',done['actors']==prior['actors']and done['xp']==prior['xp']);q.shot('02-all-crops-sandbox.png')
@@ -65,9 +65,9 @@ try:
    if not nxt or nxt in chain:break
    chain.append(nxt)
    if props.get(nxt,{}).get('canHarvest'):break
-  if len(chain)==4 and props.get(chain[-1],{}).get('canHarvest'):chains.append(chain)
- rows=[(stage,c[-1])for c in chains for stage in c[:3]]
- q.check('all_original_growth_chains_discovered',len(chains)>=60,{'varieties':len(chains),'stage_cases':len(rows)})
+  if len(chain) in (3,4) and props.get(chain[-1],{}).get('canHarvest'):chains.append(chain)
+ rows=[(stage,c[-1])for c in chains for stage in c[:-1]]
+ q.check('all_original_growth_chains_discovered',len(chains)==62 and len(rows)==160,{'varieties':len(chains),'stage_cases':len(rows)})
  for i in range(0,len(rows),6):
   batch=rows[i:i+6];fixture([row(p,k)for p,(k,e)in zip(roots,batch)])
   after=q.wait(lambda s:all(q.at(s,p)['key']==end and q.at(s,p)['ready']for p,(_,end)in zip(roots,batch)))
@@ -77,8 +77,9 @@ try:
  dates={p:q.at(after,p)['date']for p in (roots[0],roots[2])};time.sleep(1.1);q.check('ready_timestamps_not_repeatedly_reset',all(q.at(q.state(),p)['date']==d for p,d in dates.items()))
  instant(False);fixture([row(roots[0],'soil_seeded_carrots')]);q.check('disable_applies_to_new_crops',not q.at(q.state(),roots[0])['ready'])
  while q.settings()['rate']!=10:q.panel(180,204);time.sleep(.15)
- a=q.state();time.sleep(2);b=q.state();ratio=(b['game_seconds']-a['game_seconds'])/(b['wall_seconds']-a['wall_seconds']);q.check('ten_x_crop_clock_retained',9.8<ratio<10.2,ratio)
- q.panel(180,204);a=q.state();time.sleep(1);b=q.state();ratio=(b['game_seconds']-a['game_seconds'])/(b['wall_seconds']-a['wall_seconds']);q.check('one_x_clock_restored',.9<ratio<1.1,ratio)
+ time.sleep(.5);a=q.state();time.sleep(2);b=q.state();ratio=(b['game_seconds']-a['game_seconds'])/(b['wall_seconds']-a['wall_seconds']);q.check('ten_x_crop_clock_retained',9.8<ratio<10.2,ratio)
+ q.check('animation_delta_measured_at_ten_x',b.get('animation_dt',0)>0,b.get('animation_dt'))
+ q.panel(180,204);time.sleep(.5);a=q.state();time.sleep(1);b=q.state();ratio=(b['game_seconds']-a['game_seconds'])/(b['wall_seconds']-a['wall_seconds']);q.check('one_x_clock_restored',.9<ratio<1.1,ratio)
  q.toggle('sandbox',False);xp=q.state()['xp'];q.panel(190,310);time.sleep(.4);q.check('xp_master_gate_restored',q.state()['xp']==xp)
  instant(True);time.sleep(.6);q.check('growth_master_gate_restored',not q.at(q.state(),roots[0])['ready']);q.toggle('sandbox',True);q.wait(lambda s:q.at(s,roots[0])['ready'])
  q.command('save');before=q.state();q.shot('04-final-sandbox-state.png');q.close();stop();start();after=q.state()
