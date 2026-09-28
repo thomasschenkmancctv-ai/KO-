@@ -20,14 +20,36 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ZombieFarm-v015-Windows
-          run-id: 36400022672
+          run-id: 36401541719
           github-token: ${{ github.token }}
           path: built
-      - name: Restore exact source and test-only software graphics
+      - name: Restore exact source and readiness-aware native input test
+        shell: python
+        run: |
+          from pathlib import Path
+          import zipfile
+          with zipfile.ZipFile('built/desktop-source-and-content.zip') as z:z.extractall('desktop')
+          p=Path('zombiefarm-menu-qa/menu_qa.py');s=p.read_text()
+          s=s.replace(' u.EnumWindows.argtypes=', ' u.SetForegroundWindow.argtypes=[W.HWND]\n u.EnumWindows.argtypes=')
+          s=s.replace('def mouse(x,y):u.SetCursorPos', 'def mouse(x,y):u.SetForegroundWindow(geom()[0]);time.sleep(.1);u.SetCursorPos')
+          s=s.replace('gclick(.5,.55)', 'enter_farm()')
+          helper='''def enter_farm():
+           target=DATA/'qa-growth-state.json';target.unlink(missing_ok=True)
+           time.sleep(2)
+           for attempt in range(10):
+            gclick(.5,.55);time.sleep(2)
+            if target.exists():
+             print('Farm entered with native input attempt',attempt+1,flush=True);return
+           raise RuntimeError('PLAY never entered the original farm')
+          '''
+          s=s.replace('proc=None\ntry:',helper+'\nproc=None\ntry:')
+          a="check('new_gate_ready_immediately',s['can_invade'],s)"
+          s=s.replace(a,a+"\n timer=read(DATA/'qa-invasion-timer.json');check('visible_timer_has_no_wait',timer['original_two_hour_wait_remaining']==0 and not timer['effective_date_is_nil'],timer)")
+          p.write_text(s,encoding='utf-8')
+      - name: Test-only software graphics
         shell: pwsh
         run: |
           python -m pip install Pillow==11.3.0
-          python -c "import zipfile;zipfile.ZipFile('built/desktop-source-and-content.zip').extractall('desktop')"
           curl.exe --fail -L -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/25.1.6/mesa3d-25.1.6-release-msvc.7z
           if ((Get-FileHash mesa.7z -Algorithm SHA256).Hash.ToLower() -ne '7b4dea5f4fdd362acaffd13f4dd01de3b1e3f67a24c89ab92957eeb8a404e23d') { throw 'Mesa integrity failure' }
           7z x -omesa mesa.7z | Out-Null
@@ -37,6 +59,7 @@ jobs:
           python zombiefarm-menu-qa/menu_qa.py built/Zombie_Farm_Windows_v0.15.exe qa-profile output/menu 2>&1 | Tee-Object -FilePath menu-test.log
           if ($LASTEXITCODE -ne 0) { throw 'actual game menu regression failed' }
       - name: Preserve launcher visibility regression
+        if: always()
         shell: python
         run: |
           from pathlib import Path
@@ -60,6 +83,9 @@ jobs:
           if exe.exists():
               shutil.copy2(exe,out/exe.name)
               (out/'exe-sha256.txt').write_text(hashlib.sha256(exe.read_bytes()).hexdigest())
+          data=Path('qa-profile/UserData')
+          for name in ['qa-growth-state.json','qa-invasion-timer.json','settings.json']:
+              if (data/name).exists():shutil.copy2(data/name,out/name)
           (out/'test-environment.txt').write_text('Exact v0.15 Windows EXE tested on Windows Server 2022 x64. Hosted VM uses test-only Mesa 25.1.6 software OpenGL and extracted --gles1=gles1_on_gl2 default. Test driver DLLs/options are not part of released EXE. Developer test farm only; no user save modified.\n')
       - uses: actions/upload-artifact@v4
         if: always()
