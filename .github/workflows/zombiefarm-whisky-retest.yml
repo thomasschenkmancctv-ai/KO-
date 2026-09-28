@@ -21,7 +21,7 @@ jobs:
       - name: Isolated Wine 9 test environment
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends wine wine64 fonts-liberation2 xvfb xauth xdotool python3-pil
+          sudo apt-get install -y --no-install-recommends wine wine64 fonts-liberation fonts-liberation2 xvfb xauth xdotool python3-pil
       - name: Inspect exact artifact and handle runtime window title
         shell: python
         run: |
@@ -31,7 +31,7 @@ jobs:
           assert hashlib.sha256(p.read_bytes()).hexdigest()=='da3cd3eb7f01d5bee23095b58cb3c87aac218eac61896654fda968e2e82d194e'
           p=Path('zombiefarm-whisky/wine_qa.py');s=p.read_text()
           s=s.replace("'--name','^ZombieFarm$'", "'--name','Zombie.?Farm|ZombieFarm'")
-          # Finish screenshots with the game client, regardless of the original or desktop title.
+          s=s.replace("Path('/usr/share/fonts/truetype/liberation2')/f'Liberation{family}-{style}.ttf'", "next(Path('/usr/share/fonts').rglob(f'Liberation{family}-{style}.ttf'))")
           p.write_text(s,encoding='utf-8')
       - name: Launch and interact with exact Windows EXE under Wine
         run: |
