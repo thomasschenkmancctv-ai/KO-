@@ -1,0 +1,140 @@
+name: Zombie Farm v0.15 saves and invasions
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-v015.yml', 'zombiefarm-v015/apply.py', 'zombiefarm-v015/sessions.go', 'zombiefarm-v015/sessions_test.go', 'zombiefarm-v015/game_sessions.rs']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    env:
+      CARGO_TERM_COLOR: never
+      CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v014-${{ runner.os }}
+          run-id: 36389600296
+          github-token: ${{ github.token }}
+          path: baseline
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v014-Windows-final-regression
+          run-id: 36391503140
+          github-token: ${{ github.token }}
+          path: previous
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-Windows-app-local-dependencies
+          run-id: 36309054353
+          github-token: ${{ github.token }}
+          path: crt
+      - name: Restore exact current source and preserved game content
+        shell: bash
+        run: |
+          git clone --no-checkout https://github.com/H1W0XXX/touchHLE.git engine
+          cd engine
+          git checkout fa3d09511d471f505e41abed7c535e4dfbd7c59c
+          git submodule update --init --recursive
+          cd ..
+          python - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('baseline/runtime-source.zip') as z: z.extractall('engine')
+          with zipfile.ZipFile('previous/desktop-source-and-content.zip') as z: z.extractall('desktop')
+          PY
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            engine/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: zf-v015-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            zf-v015-${{ runner.os }}-
+            zf-growth-${{ runner.os }}-
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libsndio-dev libboost-dev libasound2-dev libpulse-dev libudev-dev libx11-dev libxrandr-dev libxcursor-dev libxi-dev libxext-dev libxfixes-dev libxss-dev libxinerama-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev libglu1-mesa-dev
+          python3 -m pip install cmake==3.31.6
+      - name: Windows build dependencies
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          curl --fail -L --retry 2 -o boost.7z https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z
+          7z x -oengine/vendor boost.7z >/dev/null
+          mv engine/vendor/boost_1_81_0 engine/vendor/boost
+          python -m pip install cmake==3.31.6
+      - name: Implement and compile current game
+        shell: bash
+        run: |
+          mkdir -p output/reports
+          python zombiefarm-v015/apply.py
+          gofmt -w desktop/launcher/*.go
+          rustfmt --edition 2021 engine/src/desktop_mods.rs engine/src/game_sessions.rs engine/src/zombie_growth.rs
+          cd engine
+          cargo build --release --locked --bin touchHLE 2>&1 | tee ../output/reports/build.log
+          cargo test --release --locked --lib desktop_mods::tests 2>&1 | tee ../output/reports/desktop-tests.log
+          cargo test --release --locked --lib zombie_growth::tests 2>&1 | tee ../output/reports/growth-tests.log
+          cargo test --release --locked --lib zombie_farm_only_overrides_intervals_for_last_invasion_date 2>&1 | tee ../output/reports/invasion-tests.log
+      - name: Package actual game and execute launcher tests
+        shell: python
+        run: |
+          from pathlib import Path
+          import shutil,os,subprocess,sys,zipfile
+          root=Path('engine');rt=Path('runtime');rt.mkdir(exist_ok=True)
+          exe='touchHLE.exe' if os.name=='nt' else 'touchHLE'
+          shutil.copy2(root/'target/release'/exe,rt/exe)
+          for n in ['LICENSE','touchHLE_default_options.txt']:shutil.copy2(root/n,rt/n)
+          shutil.copytree(root/'touchHLE_dylibs',rt/'touchHLE_dylibs',dirs_exist_ok=True)
+          if os.name=='nt':
+              for p in Path('crt').glob('*.dll'):shutil.copy2(p,rt/p.name)
+          else:
+              (rt/'lib').mkdir(exist_ok=True)
+              for p in Path('/usr/lib/x86_64-linux-gnu').glob('libsndio.so.*'):shutil.copy2(p,rt/'lib'/p.name)
+          subprocess.run([sys.executable,'desktop/tools/package.py','--runtime',str(rt.resolve()),'--platform','windows' if os.name=='nt' else 'linux','--out',str(Path('output').resolve())],check=True)
+          for n in ['desktop_mods.rs','game_sessions.rs','zombie_growth.rs']:shutil.copy2(root/'src'/n,Path('desktop/runtime')/n)
+          with zipfile.ZipFile('output/runtime-source.zip','w',zipfile.ZIP_DEFLATED) as z:
+              for folder in ['src','dev-docs','dev-scripts']:
+                  for p in (root/folder).rglob('*'):
+                      if p.is_file():z.write(p,p.relative_to(root).as_posix())
+              for n in ['Cargo.toml','Cargo.lock','build.rs','.gitmodules','README.md','LICENSE']:z.write(root/n,n)
+          with zipfile.ZipFile('output/desktop-source-and-content.zip','w',zipfile.ZIP_DEFLATED) as z:
+              for p in Path('desktop').rglob('*'):
+                  if p.is_file() and p.name!='payload.zip' and '__pycache__' not in p.parts:
+                      assert p.suffix.lower() not in ('.ttf','.otf','.woff','.woff2')
+                      z.write(p,p.relative_to('desktop').as_posix())
+          shutil.copytree(rt,'output/runtime',dirs_exist_ok=True)
+      - name: Retain diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p output/reports
+          cp zombiefarm-v015/apply.py output/reports/
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            engine/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: zf-v015-${{ runner.os }}-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v015-${{ runner.os }}
+          path: output/
+          retention-days: 7
