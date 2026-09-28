@@ -1,0 +1,109 @@
+name: Zombie Farm v0.14 packaged Windows growth QA
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-growth-qa.yml', 'zombiefarm-growth-qa/**']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v013-packaged-Windows-verification
+          run-id: 36314489247
+          github-token: ${{ github.token }}
+          path: previous
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v014-Windows
+          run-id: 36389600296
+          github-token: ${{ github.token }}
+          path: runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-Windows-app-local-dependencies
+          run-id: 36309054353
+          github-token: ${{ github.token }}
+          path: crt
+      - name: Preserve working launcher and original content; restore reviewed live-game tests
+        shell: python
+        run: |
+          from pathlib import Path
+          import zipfile,base64,zlib,json,hashlib,shutil
+          with zipfile.ZipFile('previous/desktop-source-and-content.zip') as z:z.extractall('desktop')
+          for n in ['launcher/main.go','tools/package.py','tools/windows_qa.py']:
+              p=Path('desktop')/n;p.write_text(p.read_text(encoding='utf-8').replace('0.13','0.14'),encoding='utf-8',newline='\n')
+          b=base64.b64decode(Path('zombiefarm-growth-qa/source.b64').read_text().strip())
+          assert hashlib.sha256(b).hexdigest()=='5c456714c38a5b2188f898e9433cd19cc7c1332cecd8974caa0f43078bc8863d'
+          for n,s in json.loads(zlib.decompress(b)).items():
+              assert n in ['growth_regression.py','windows_growth_entry.py']
+              s=s.replace("r.get('category')=='crop' and r.get('subCategory')=='zombie'", "r.get('category')=='crop' and str(r.get('unitKey','')).startswith('ZombieActor')")
+              (Path('desktop/tools')/n).write_text(s,encoding='utf-8',newline='\n')
+          for p in Path('crt').glob('*.dll'):shutil.copy2(p,Path('runtime')/p.name)
+          Path('desktop/runtime').mkdir(exist_ok=True)
+          for n in ['desktop_mods.rs','zombie_growth.rs']:shutil.copy2(Path('runtime/reports')/n,Path('desktop/runtime')/n)
+          Path('output').mkdir(exist_ok=True)
+      - name: Native launcher regression and complete single-file package
+        shell: pwsh
+        run: |
+          python -m pip install Pillow==11.3.0
+          python desktop/tools/package.py --runtime "$pwd/runtime" --platform windows --out "$pwd/output"
+          if ($LASTEXITCODE -ne 0) { throw 'native launcher tests or packaging failed' }
+          Push-Location desktop
+          python -m unittest discover -s tests -v 2>&1 | Tee-Object ../output/content-tests.txt
+          if ($LASTEXITCODE -ne 0) { throw 'original content regression failed' }
+          Pop-Location
+      - name: Test-only OpenGL driver for hosted Windows VM
+        shell: pwsh
+        run: |
+          curl.exe --fail -L -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/25.1.6/mesa3d-25.1.6-release-msvc.7z
+          if ((Get-FileHash mesa.7z -Algorithm SHA256).Hash.ToLower() -ne '7b4dea5f4fdd362acaffd13f4dd01de3b1e3f67a24c89ab92957eeb8a404e23d') { throw 'Mesa integrity failure' }
+          7z x -omesa mesa.7z | Out-Null
+      - name: Actual packaged GUI launch, recovery, and fullscreen regression
+        shell: pwsh
+        run: |
+          python desktop/tools/windows_qa.py 2>&1 | Tee-Object output/launch-qa.log
+          if ($LASTEXITCODE -ne 0) { throw 'native packaged-game GUI test failed' }
+      - name: Actual game instant-growth, stage matrix, and original save reload
+        shell: pwsh
+        run: |
+          python desktop/tools/windows_growth_entry.py 2>&1 | Tee-Object output/growth-qa.log
+          if ($LASTEXITCODE -ne 0) { throw 'native growth regression failed' }
+      - name: Preserve exact source, original content, and inspectable test evidence
+        if: always()
+        shell: python
+        run: |
+          from pathlib import Path
+          import zipfile,shutil,hashlib,json
+          out=Path('output');out.mkdir(exist_ok=True)
+          for n in ['growth_regression.py','windows_growth_entry.py','windows_qa.py']:
+              p=Path('desktop/tools')/n
+              if p.exists():shutil.copy2(p,out/n)
+          shutil.copytree('runtime/reports',out/'runtime-reports',dirs_exist_ok=True)
+          with zipfile.ZipFile(out/'desktop-source-and-content.zip','w',zipfile.ZIP_DEFLATED) as z:
+              for folder in ['launcher','tools','tests','runtime','content']:
+                  for p in (Path('desktop')/folder).rglob('*'):
+                      if p.is_file() and p.name!='payload.zip' and '__pycache__' not in p.parts:
+                          assert p.suffix.lower() not in ['.ttf','.otf','.woff','.woff2']
+                          z.write(p,p.relative_to('desktop').as_posix())
+          exe=out/'Zombie_Farm_Windows_v0.14.exe'
+          if exe.exists():(out/'release-exe.sha256').write_text(hashlib.sha256(exe.read_bytes()).hexdigest())
+          (out/'test-environment.txt').write_text('Native Windows Server 2022 x64. Exact packaged EXE, unchanged original game content, production toggle driven through real input.\nHosted VM uses test-only Mesa llvmpipe and gles1_on_gl2 in isolated QA settings, not bundled with the release.\nFixture commands are opt-in dev tests in isolated saves.\n')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v014-Windows-tested
+          path: output/
+          retention-days: 7
