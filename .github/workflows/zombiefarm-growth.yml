@@ -1,0 +1,108 @@
+name: Zombie Farm v0.14 instant zombie growth
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-growth.yml', 'zombiefarm-growth/**']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    env:
+      CARGO_TERM_COLOR: never
+      CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v012-${{ runner.os }}
+          run-id: 36310504063
+          github-token: ${{ github.token }}
+          path: baseline
+      - name: Preserved core source
+        shell: bash
+        run: |
+          git clone --no-checkout https://github.com/H1W0XXX/touchHLE.git engine
+          cd engine
+          git checkout fa3d09511d471f505e41abed7c535e4dfbd7c59c
+          git submodule update --init --recursive
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            engine/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: zf-growth-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            zf-growth-${{ runner.os }}-
+            zf-desktop-${{ runner.os }}-v012-
+            zf-desktop-${{ runner.os }}-fa3d095-
+            zf-linux-build2
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libsndio-dev libboost-dev libasound2-dev libpulse-dev libudev-dev libx11-dev libxrandr-dev libxcursor-dev libxi-dev libxext-dev libxfixes-dev libxss-dev libxinerama-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev libglu1-mesa-dev
+          python3 -m pip install cmake==3.31.6
+      - name: Windows dependencies
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          curl --fail -L --retry 2 -o boost.7z https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z
+          7z x -oengine/vendor boost.7z >/dev/null
+          mv engine/vendor/boost_1_81_0 engine/vendor/boost
+          python -m pip install cmake==3.31.6
+      - name: Apply and compile growth integration
+        shell: bash
+        run: |
+          mkdir -p output/reports
+          python zombiefarm-growth/apply.py
+          rustfmt --edition 2021 engine/src/desktop_mods.rs engine/src/zombie_growth.rs
+          cd engine
+          cargo build --release --locked --bin touchHLE 2>&1 | tee ../output/reports/build.log
+          cargo test --release --locked --lib zombie_growth::tests 2>&1 | tee ../output/reports/growth-tests.log
+          cargo test --release --locked --lib desktop_mods::tests 2>&1 | tee ../output/reports/desktop-tests.log
+      - name: Preserve successful runtime
+        shell: python
+        run: |
+          from pathlib import Path
+          import os, shutil,zipfile,hashlib,json
+          out=Path('output');root=Path('engine');exe='touchHLE.exe' if os.name=='nt' else 'touchHLE'
+          shutil.copy2(root/'target/release'/exe,out/exe)
+          shutil.copytree(root/'touchHLE_dylibs',out/'touchHLE_dylibs',dirs_exist_ok=True)
+          for name in ['LICENSE','touchHLE_default_options.txt']:shutil.copy2(root/name,out/name)
+          if os.name!='nt':shutil.copytree('baseline/lib',out/'lib',dirs_exist_ok=True)
+          with zipfile.ZipFile(out/'runtime-source.zip','w',zipfile.ZIP_DEFLATED)as z:
+              for folder in ['src','dev-docs','dev-scripts']:
+                  for p in(root/folder).rglob('*'):
+                      if p.is_file():z.write(p,p.relative_to(root).as_posix())
+              for name in ['Cargo.toml','Cargo.lock','build.rs','.gitmodules','README.md','LICENSE']:z.write(root/name,name)
+          (out/'reports/identity.json').write_text(json.dumps({'version':'0.14','runtime_sha256':hashlib.sha256((out/exe).read_bytes()).hexdigest(),'growth_sha256':hashlib.sha256((root/'src/zombie_growth.rs').read_bytes()).hexdigest()},indent=2))
+      - name: Retain diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p output/reports
+          cp engine/src/zombie_growth.rs output/reports/ || true
+          cp engine/src/desktop_mods.rs output/reports/ || true
+          cp zombiefarm-growth/apply.py output/reports/ || true
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            engine/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: zf-growth-${{ runner.os }}-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v014-${{ runner.os }}
+          path: output/
+          retention-days: 7
