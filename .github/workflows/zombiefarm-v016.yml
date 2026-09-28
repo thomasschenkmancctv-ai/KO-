@@ -1,0 +1,126 @@
+name: Zombie Farm v0.16 invasion stability and scroll optimization
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-v016.yml', 'zombiefarm-v016/apply.py']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    env:
+      CARGO_TERM_COLOR: never
+      CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v015-${{ runner.os }}
+          run-id: 36396610965
+          github-token: ${{ github.token }}
+          path: baseline
+      - name: Preserve exact working baseline
+        shell: bash
+        run: |
+          git clone --no-checkout https://github.com/H1W0XXX/touchHLE.git engine
+          cd engine
+          git checkout fa3d09511d471f505e41abed7c535e4dfbd7c59c
+          git submodule update --init --recursive
+          cd ..
+          python - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('baseline/runtime-source.zip') as z:z.extractall('engine')
+          with zipfile.ZipFile('baseline/desktop-source-and-content.zip') as z:z.extractall('desktop')
+          PY
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            engine/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: zf-v016-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            zf-v016-${{ runner.os }}-
+            zf-v015-${{ runner.os }}-
+      - name: Linux prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libsndio-dev libboost-dev libasound2-dev libpulse-dev libudev-dev libx11-dev libxrandr-dev libxcursor-dev libxi-dev libxext-dev libxfixes-dev libxss-dev libxinerama-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev libglu1-mesa-dev
+          python3 -m pip install cmake==3.31.6
+      - name: Windows prerequisites
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          curl --fail -L --retry 2 -o boost.7z https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z
+          7z x -oengine/vendor boost.7z >/dev/null
+          mv engine/vendor/boost_1_81_0 engine/vendor/boost
+          python -m pip install cmake==3.31.6
+      - name: Compile corrected game runtime and run regressions
+        shell: bash
+        run: |
+          mkdir -p output/reports
+          python zombiefarm-v016/apply.py
+          rustfmt --edition 2021 engine/src/zombie_growth.rs engine/src/desktop_mods.rs
+          cd engine
+          cargo build --release --locked --bin touchHLE 2>&1 | tee ../output/reports/build.log
+          cargo test --release --locked --lib zombie_farm:: 2>&1 | tee ../output/reports/compatibility-tests.log
+          cargo test --release --locked --lib zombie_growth::tests 2>&1 | tee ../output/reports/growth-tests.log
+          cargo test --release --locked --lib desktop_mods::tests 2>&1 | tee ../output/reports/desktop-tests.log
+      - name: Package matching Windows or Linux game
+        shell: python
+        run: |
+          from pathlib import Path
+          import shutil,os,subprocess,sys,zipfile,hashlib,json
+          root=Path('engine');rt=Path('runtime')
+          shutil.copytree('baseline/runtime',rt,dirs_exist_ok=True)
+          exe='touchHLE.exe' if os.name=='nt' else 'touchHLE'
+          shutil.copy2(root/'target/release'/exe,rt/exe)
+          subprocess.run([sys.executable,'desktop/tools/package.py','--runtime',str(rt.resolve()),'--platform','windows' if os.name=='nt' else 'linux','--out',str(Path('output').resolve())],check=True)
+          for n in ['desktop_mods.rs','game_sessions.rs','zombie_growth.rs']:
+              shutil.copy2(root/'src'/n,Path('desktop/runtime')/n)
+          shutil.copy2('zombiefarm-v016/apply.py','desktop/tools/apply016.py')
+          with zipfile.ZipFile('output/runtime-source.zip','w',zipfile.ZIP_DEFLATED) as z:
+              for folder in ['src','dev-docs','dev-scripts']:
+                  for p in (root/folder).rglob('*'):
+                      if p.is_file():z.write(p,p.relative_to(root).as_posix())
+              for n in ['Cargo.toml','Cargo.lock','build.rs','.gitmodules','README.md','LICENSE']:z.write(root/n,n)
+          with zipfile.ZipFile('output/desktop-source-and-content.zip','w',zipfile.ZIP_DEFLATED) as z:
+              for p in Path('desktop').rglob('*'):
+                  if p.is_file() and p.name!='payload.zip' and '__pycache__' not in p.parts:
+                      assert p.suffix.lower() not in ('.ttf','.otf','.woff','.woff2')
+                      z.write(p,p.relative_to('desktop').as_posix())
+          shutil.copytree(rt,'output/runtime',dirs_exist_ok=True)
+          (Path('output/reports/runtime-identity.json')).write_text(json.dumps({'version':'0.16','runtime_sha256':hashlib.sha256((rt/exe).read_bytes()).hexdigest(),'source_sha256':hashlib.sha256((root/'src/objc/messages/zombie_farm.rs').read_bytes()).hexdigest()},indent=2))
+      - name: Retain source diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p output/reports
+          cp zombiefarm-v016/apply.py output/reports/
+          (cd engine && git diff) >output/reports/current-source.diff
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            engine/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: zf-v016-${{ runner.os }}-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v016-${{ runner.os }}
+          path: output/
+          retention-days: 7
