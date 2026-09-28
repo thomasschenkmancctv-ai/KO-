@@ -10,7 +10,7 @@ s=s.replace('byte(env, tile, "isPlant", 0);','byte(env, tile, "isPlant", u8::fro
 s=s.replace('These terminal zombies must still be recognized as harvestable.','Terminal plants and zombies must retain correct type and harvest flags.')
 a='    let experience=crate::sandbox_rewards::xp(env,data);'
 b='''    let director:id=msg_class![env; CCDirector sharedDirector];
-    let animation_dt=env.objc.object_lookup_ivar(&env.mem,director,&"dt".to_owned()).map(|p|env.mem.read::<f32>(p.cast()));
+    let animation_dt=env.objc.object_lookup_ivar(&env.mem,director,&"dt".to_owned()).map(|p| {let value:f32=env.mem.read(p.cast());value});
 '''+a
 assert s.count(a)==1;s=s.replace(a,b)
 s=s.replace('json!({"xp":experience,','json!({"animation_dt":animation_dt,"xp":experience,')
