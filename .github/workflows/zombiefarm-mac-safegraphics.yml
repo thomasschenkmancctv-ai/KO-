@@ -9,7 +9,7 @@ permissions:
 jobs:
   mac:
     runs-on: macos-14
-    timeout-minutes: 12
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,7 +28,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           for i in $(seq 1 40); do
-            count=$(gh api repos/thomasschenkmancctv-ai/KO-/actions/runs/36436431906/artifacts --jq '[.artifacts[] | select(.name=="ZombieFarm-v0152-Windows")] | length')
+            count=$(gh api repos/thomasschenkmancctv-ai/KO-/actions/runs/36437877132/artifacts --jq '[.artifacts[] | select(.name=="ZombieFarm-v0152-Windows")] | length')
             if [ "$count" = '1' ]; then exit 0; fi
             sleep 5
           done
@@ -36,7 +36,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ZombieFarm-v0152-Windows
-          run-id: 36436431906
+          run-id: 36437877132
           github-token: ${{ github.token }}
           path: build
       - name: Run actual Windows EXE on Apple Silicon and capture frames
@@ -46,6 +46,8 @@ jobs:
           import runpy
           p=Path('zombiefarm-mac-qa/mac_qa.py')
           s=p.read_text().replace('shutil.copy2(src,fonts/', 'shutil.copyfile(src,fonts/')
+          s=s.replace("WINEDEBUG='-all'", "WINEDEBUG='-all,+loaddll,+seh'")
+          s=s.replace("'Driver info:' in text and 'llvmpipe' in text and 'Mesa 25.1.6' in text", "any('Driver info:' in line and 'llvmpipe' in line and 'Mesa 25.1.6' in line for line in text.splitlines())")
           p.write_text(s)
           runpy.run_path(str(p),run_name='__main__')
       - name: Preserve test source
