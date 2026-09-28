@@ -1,0 +1,90 @@
+name: Zombie Farm Whisky graphics hotfix
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-whisky.yml', 'zombiefarm-whisky/**']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v015-Windows
+          run-id: 36401541719
+          github-token: ${{ github.token }}
+          path: baseline
+      - name: Preserve baseline and compile compatibility launcher
+        shell: pwsh
+        run: |
+          python -m pip install Pillow==11.3.0
+          python zombiefarm-whisky/prepare.py
+          if ($LASTEXITCODE -ne 0) { throw 'Hotfix build or launcher tests failed' }
+      - name: Test-only graphics for hosted VM
+        shell: pwsh
+        run: |
+          curl.exe --fail -L -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/25.1.6/mesa3d-25.1.6-release-msvc.7z
+          if ((Get-FileHash mesa.7z -Algorithm SHA256).Hash.ToLower() -ne '7b4dea5f4fdd362acaffd13f4dd01de3b1e3f67a24c89ab92957eeb8a404e23d') { throw 'Mesa integrity failure' }
+          7z x -omesa mesa.7z | Out-Null
+      - name: Exact EXE renderer override and visible-window regression
+        shell: pwsh
+        env:
+          ZF_SKIP_START_MENU: '1'
+        run: |
+          python desktop/tools/windows_qa.py
+          if ($LASTEXITCODE -ne 0) { throw 'Native Windows GUI regression failed' }
+      - name: Preserve QA source and scope
+        if: always()
+        shell: python
+        run: |
+          from pathlib import Path
+          import shutil
+          p=Path('output');p.mkdir(exist_ok=True)
+          if Path('desktop/tools/windows_qa.py').exists():shutil.copy2('desktop/tools/windows_qa.py',p/'windows_qa.py')
+          (p/'TEST-SCOPE.txt').write_text('Exact packaged Windows EXE tested on Windows Server 2022 x64. Test-only Mesa is injected for this VM, not shipped. A conflicting saved native-GLES option was intentionally left in the profile; the launcher must override it without editing the file. This is not a physical Mac/Whisky test. No post-invasion crash fix is claimed.\n')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v0151-Windows-hotfix
+          path: output/
+          retention-days: 14
+  wine:
+    needs: windows
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v0151-Windows-hotfix
+          path: output
+      - name: Install isolated Wine test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends wine wine64 fonts-liberation2 xvfb xauth xdotool python3-pil
+      - name: Actual Windows executable under Wine
+        run: |
+          xvfb-run -a -s '-screen 0 1440x1000x24 +extension GLX +render -noreset' python3 zombiefarm-whisky/wine_qa.py
+      - name: Preserve test source
+        if: always()
+        run: cp zombiefarm-whisky/wine_qa.py output/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v0151-Wine-QA
+          path: |
+            output/wine-*
+          retention-days: 14
