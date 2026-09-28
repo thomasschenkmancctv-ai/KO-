@@ -15,4 +15,7 @@ b='''    let director:id=msg_class![env; CCDirector sharedDirector];
 assert s.count(a)==1;s=s.replace(a,b)
 s=s.replace('json!({"xp":experience,','json!({"animation_dt":animation_dt,"xp":experience,')
 p.write_text(s)
-print('Terminal plant harvest flags and read-only animation delta telemetry integrated')
+import runpy
+runpy.run_path(str(Path(__file__).with_name('input_fix.py')))
+p=Path('engine/src/sandbox_rewards.rs');p.write_text(p.read_text().replace('mod input_regression_tests','mod tests_input'))
+print('Terminal plant harvest flags, animation delta telemetry and mouse queue coalescing integrated')
