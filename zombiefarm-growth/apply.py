@@ -1,8 +1,7 @@
 from pathlib import Path
 import zipfile,json,hashlib,shutil
 root=Path('engine')
-# The v0.13 distribution deliberately preserves the v0.12 core runtime. Restore
-# its exact reviewed source snapshot before adding this one feature.
+# Preserve the exact desktop core already verified in the working v0.13 package.
 with zipfile.ZipFile('baseline/runtime-source.zip') as z:
  for n in z.namelist():
   if n.startswith('src/'):
@@ -48,6 +47,7 @@ p.write_text(s,encoding='utf-8')
 g=Path('zombiefarm-growth/zombie_growth.rs').read_text()
 g=g.replace("fn class_name(env: &Environment, receiver: id) -> Option<&'static str>","fn class_name<'a>(env: &'a Environment, receiver: id) -> Option<&'a str>")
 g=g.replace('env.objc.read_isa(&env.mem, receiver)','crate::objc::ObjC::read_isa(receiver, &env.mem)')
+g=g.replace('tiles.push(json!({"key":k,"x":point.x,"y":point.y,','let px = point.x; let py = point.y;\n            tiles.push(json!({"key":k,"x":px,"y":py,')
 (root/'src/zombie_growth.rs').write_text(g,encoding='utf-8')
 p=root/'src/lib.rs';s=p.read_text();assert s.count('pub mod desktop_mods;')==1;p.write_text(s.replace('pub mod desktop_mods;','pub mod desktop_mods;\nmod zombie_growth;'))
 p=root/'src/objc/messages.rs';s=p.read_text();a='    maybe_initialize_class(env, receiver);';assert s.count(a)==1
