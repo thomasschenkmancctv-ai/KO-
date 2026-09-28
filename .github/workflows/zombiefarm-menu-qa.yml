@@ -1,0 +1,67 @@
+name: Zombie Farm v0.15 packaged Windows save QA
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-menu-qa.yml','zombiefarm-menu-qa/**']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v015-Windows
+          run-id: 36400022672
+          github-token: ${{ github.token }}
+          path: built
+      - name: Restore exact source and test-only software graphics
+        shell: pwsh
+        run: |
+          python -m pip install Pillow==11.3.0
+          python -c "import zipfile;zipfile.ZipFile('built/desktop-source-and-content.zip').extractall('desktop')"
+          curl.exe --fail -L -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/25.1.6/mesa3d-25.1.6-release-msvc.7z
+          if ((Get-FileHash mesa.7z -Algorithm SHA256).Hash.ToLower() -ne '7b4dea5f4fdd362acaffd13f4dd01de3b1e3f67a24c89ab92957eeb8a404e23d') { throw 'Mesa integrity failure' }
+          7z x -omesa mesa.7z | Out-Null
+      - name: Actual New Game Load Game and invasion-cooldown tests
+        shell: pwsh
+        run: |
+          python zombiefarm-menu-qa/menu_qa.py built/Zombie_Farm_Windows_v0.15.exe qa-profile output/menu 2>&1 | Tee-Object -FilePath menu-test.log
+          if ($LASTEXITCODE -ne 0) { throw 'actual game menu regression failed' }
+      - name: Preserve launcher visibility regression
+        shell: python
+        run: |
+          from pathlib import Path
+          import shutil,os,subprocess,sys
+          out=Path('output');out.mkdir(exist_ok=True)
+          shutil.copy2('built/Zombie_Farm_Windows_v0.15.exe',out/'Zombie_Farm_Windows_v0.15.exe')
+          p=Path('desktop/tools/windows_qa.py');s=p.read_text().replace('0.14','0.15').replace('0.13','0.15')
+          p.write_text(s,encoding='utf-8')
+          e=os.environ.copy();e['ZF_SKIP_START_MENU']='1'
+          subprocess.run([sys.executable,str(p)],env=e,check=True)
+      - name: Preserve tests, logs and exact packaged executable
+        if: always()
+        shell: python
+        run: |
+          from pathlib import Path
+          import shutil,hashlib,json
+          out=Path('output');out.mkdir(exist_ok=True)
+          for f in ['menu-test.log','zombiefarm-menu-qa/menu_qa.py']:
+              if Path(f).exists():shutil.copy2(f,out/Path(f).name)
+          exe=Path('built/Zombie_Farm_Windows_v0.15.exe')
+          if exe.exists():
+              shutil.copy2(exe,out/exe.name)
+              (out/'exe-sha256.txt').write_text(hashlib.sha256(exe.read_bytes()).hexdigest())
+          (out/'test-environment.txt').write_text('Exact v0.15 Windows EXE tested on Windows Server 2022 x64. Hosted VM uses test-only Mesa 25.1.6 software OpenGL and extracted --gles1=gles1_on_gl2 default. Test driver DLLs/options are not part of released EXE. Developer test farm only; no user save modified.\n')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v015-Windows-gameplay-QA
+          path: output/
+          retention-days: 14
