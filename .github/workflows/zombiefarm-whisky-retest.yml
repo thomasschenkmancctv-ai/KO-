@@ -1,0 +1,51 @@
+name: Zombie Farm Whisky hotfix verification
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-whisky-retest.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  wine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v0151-Windows-hotfix
+          run-id: 36429378577
+          github-token: ${{ github.token }}
+          path: output
+      - name: Isolated Wine 9 test environment
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends wine wine64 fonts-liberation2 xvfb xauth xdotool python3-pil
+      - name: Inspect exact artifact and handle runtime window title
+        shell: python
+        run: |
+          from pathlib import Path
+          import hashlib
+          p=Path('output/Zombie_Farm_Windows_v0.15.1.exe')
+          assert hashlib.sha256(p.read_bytes()).hexdigest()=='da3cd3eb7f01d5bee23095b58cb3c87aac218eac61896654fda968e2e82d194e'
+          p=Path('zombiefarm-whisky/wine_qa.py');s=p.read_text()
+          s=s.replace("'--name','^ZombieFarm$'", "'--name','Zombie.?Farm|ZombieFarm'")
+          # Finish screenshots with the game client, regardless of the original or desktop title.
+          p.write_text(s,encoding='utf-8')
+      - name: Launch and interact with exact Windows EXE under Wine
+        run: |
+          xvfb-run -a -s '-screen 0 1440x1000x24 +extension GLX +render -noreset' /usr/bin/python3 zombiefarm-whisky/wine_qa.py
+      - name: Preserve actual QA evidence
+        if: always()
+        run: |
+          cp zombiefarm-whisky/wine_qa.py output/wine_qa.py
+          echo 'Wine 9 on Ubuntu 24.04; native Windows EXE, not native Linux build. This is not a macOS/Whisky device test.' > output/wine-test-scope.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v0151-Wine-final-QA
+          path: |
+            output/wine-*
+            output/wine_qa.py
+          retention-days: 14
