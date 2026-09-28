@@ -1,0 +1,56 @@
+name: Zombie Farm Apple Silicon graphics QA
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-mac-safegraphics.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  mac:
+    runs-on: macos-14
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Test-only native Wine on macOS
+        run: |
+          softwareupdate --install-rosetta --agree-to-license || true
+          curl --fail -L -o wine.tar.xz https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.18/wine-devel-11.18-osx64.tar.xz
+          echo 'aa0ea4c82e636ae7bca2076387cb0a5affa26509ad13f119ecd0d62bd7ba6f82  wine.tar.xz' | shasum -a 256 -c -
+          mkdir wine-dist
+          tar -xf wine.tar.xz -C wine-dist
+          python -m pip install pyobjc-framework-Quartz Pillow
+      - name: Wait for exact packaged artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 40); do
+            count=$(gh api repos/thomasschenkmancctv-ai/KO-/actions/runs/36435810149/artifacts --jq '[.artifacts[] | select(.name=="ZombieFarm-v0152-Windows")] | length')
+            if [ "$count" = '1' ]; then exit 0; fi
+            sleep 5
+          done
+          exit 1
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v0152-Windows
+          run-id: 36435810149
+          github-token: ${{ github.token }}
+          path: build
+      - name: Run actual Windows EXE on Apple Silicon and capture frames
+        run: python zombiefarm-mac-qa/mac_qa.py
+      - name: Preserve test source
+        if: always()
+        run: |
+          mkdir -p mac-evidence
+          cp zombiefarm-mac-qa/mac_qa.py mac-evidence/
+          sw_vers > mac-evidence/macos-version.txt
+          uname -m >> mac-evidence/macos-version.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v0152-macOS-QA
+          path: mac-evidence/
+          retention-days: 14
