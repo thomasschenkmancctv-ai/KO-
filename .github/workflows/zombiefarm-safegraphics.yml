@@ -33,14 +33,31 @@ jobs:
           run-id: 36429378577
           github-token: ${{ github.token }}
           path: hotfix
-      - name: Get pinned graphics source distribution
+      - name: Get pinned graphics distribution
         shell: pwsh
         run: |
           python -m pip install Pillow==11.3.0
           curl.exe --fail -L -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/25.1.6/mesa3d-25.1.6-release-msvc.7z
           if ((Get-FileHash mesa.7z -Algorithm SHA256).Hash.ToLower() -ne '7b4dea5f4fdd362acaffd13f4dd01de3b1e3f67a24c89ab92957eeb8a404e23d') { throw 'Mesa integrity failure' }
           7z x -omesa mesa.7z | Out-Null
-      - name: Compile and package genuine offline renderer
+      - name: Fix application-local Wine module resolution and enforce measured renderer
+        shell: python
+        run: |
+          from pathlib import Path
+          root=Path('zombiefarm-safegraphics')
+          for n in ['graphics.go','graphics_test.go']:
+              p=root/n;s=p.read_text()
+              s=s.replace('compat/opengl32.dll','opengl32.dll').replace('compat/libgallium_wgl.dll','libgallium_wgl.dll')
+              s=s.replace('filepath.Join(cmd.Dir,"compat","opengl32.dll")','filepath.Join(cmd.Dir,"opengl32.dll")')
+              s=s.replace('filepath.Join(cmd.Dir,"compat")','cmd.Dir')
+              s=s.replace('filepath.Join(dir,"compat/opengl32.dll")','filepath.Join(dir,"opengl32.dll")')
+              p.write_text(s)
+          p=root/'prepare.py';s=p.read_text().replace("root/'content/compat'","root/'content'")
+          s=s.replace("assert not (d/'opengl32.dll').exists()", "assert (d/'opengl32.dll').exists()")
+          s=s.replace("(d/'compat/opengl32.dll')", "(d/'opengl32.dll')")
+          s=s.replace("'llvmpipe' in log_text and 'Mesa 25.1.6' in log_text", "any('Driver info:' in line and 'llvmpipe' in line and 'Mesa 25.1.6' in line for line in log_text.splitlines())")
+          p.write_text(s)
+      - name: Compile and package offline renderer
         shell: pwsh
         run: |
           python zombiefarm-safegraphics/prepare.py
@@ -60,7 +77,7 @@ jobs:
           import shutil
           p=Path('output');p.mkdir(exist_ok=True)
           shutil.copytree('zombiefarm-safegraphics',p/'build-scripts',dirs_exist_ok=True)
-          (p/'TEST-SCOPE.txt').write_text('Exact Windows EXE with bundled Mesa CPU graphics. No test-only graphics DLL or renderer option injection. Windows Server 2022 test is not a physical Mac/Whisky test. No post-invasion fix is claimed.\n')
+          (p/'TEST-SCOPE.txt').write_text('Exact Windows EXE with bundled Mesa CPU graphics. No test-only graphics injection. Renderer assertion uses the actual Driver info line, not the launcher announcement. Windows Server 2022 is not a physical Mac/Whisky test. No post-invasion fix is claimed.\n')
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -89,9 +106,9 @@ jobs:
           s=s.replace("'--name','^ZombieFarm$'", "'--name','Zombie.?Farm|ZombieFarm'")
           s=s.replace("Path('/usr/share/fonts/truetype/liberation2')/f'Liberation{family}-{style}.ttf'", "next(Path('/usr/share/fonts').rglob(f'Liberation{family}-{style}.ttf'))")
           s=s.replace("WINEDLLOVERRIDES='mscoree,mshtml='", "WINEDLLOVERRIDES='mscoree,mshtml=;opengl32=b'")
-          a="check('saved_native_option_untouched'"
-          idx=s.index(a)
-          s=s[:idx]+"check('bundled_cpu_renderer_confirmed','llvmpipe' in text and 'Mesa 25.1.6' in text,text[:3000])\n "+s[idx:]
+          s=s.replace("WINEDEBUG='-all'", "WINEDEBUG='-all,+loaddll,+seh'")
+          a="check('saved_native_option_untouched'";idx=s.index(a)
+          s=s[:idx]+"check('bundled_cpu_renderer_confirmed',any('Driver info:' in line and 'llvmpipe' in line and 'Mesa 25.1.6' in line for line in text.splitlines()),text[:3000])\n "+s[idx:]
           Path('output/wine_qa.py').write_text(s)
       - name: Exact Windows game under Wine
         run: |
@@ -99,7 +116,7 @@ jobs:
       - name: Preserve test scope
         if: always()
         run: |
-          echo 'Wine 9 Ubuntu 24.04; shipped Windows EXE and embedded Mesa only. Conflicting native GLES preference and Wine OpenGL override were intentionally supplied to verify child-only correction. Not a macOS Whisky test.' >output/wine-test-scope.txt
+          echo 'Wine 9 Ubuntu 24.04; shipped Windows EXE and embedded Mesa only. Renderer assertions use only driver-reported version. Not a macOS Whisky test.' >output/wine-test-scope.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
