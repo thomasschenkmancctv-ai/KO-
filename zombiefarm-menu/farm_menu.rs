@@ -62,7 +62,7 @@ pub fn override_message(env:&mut Environment, receiver:id, selector:&str) -> boo
 pub fn raw_can_invade(env:&mut Environment,state:id)->bool {
  INVASION_OVERRIDE.store(false,Ordering::Relaxed);let result:bool=msg![env; state canInvade];INVASION_OVERRIDE.store(true,Ordering::Relaxed);
  if std::env::var_os("ZF_GROWTH_QA").is_some() {
-  let data:id=msg![env; state gameData];
+  let data:id=msg![env; state zfGameData];
   let date:id=msg![env; data lastInvasionDate];
   let now:id=msg_class![env; NSDate date];
   let elapsed:f64=msg![env; now timeIntervalSinceDate:date];
