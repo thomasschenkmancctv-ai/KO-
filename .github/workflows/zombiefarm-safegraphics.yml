@@ -40,23 +40,21 @@ jobs:
           curl.exe --fail -L -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/25.1.6/mesa3d-25.1.6-release-msvc.7z
           if ((Get-FileHash mesa.7z -Algorithm SHA256).Hash.ToLower() -ne '7b4dea5f4fdd362acaffd13f4dd01de3b1e3f67a24c89ab92957eeb8a404e23d') { throw 'Mesa integrity failure' }
           7z x -omesa mesa.7z | Out-Null
-      - name: Fix application-local Wine module resolution and enforce measured renderer
+      - name: Preserve renderer licensing
         shell: python
         run: |
           from pathlib import Path
-          root=Path('zombiefarm-safegraphics')
-          for n in ['graphics.go','graphics_test.go']:
-              p=root/n;s=p.read_text()
-              s=s.replace('compat/opengl32.dll','opengl32.dll').replace('compat/libgallium_wgl.dll','libgallium_wgl.dll')
-              s=s.replace('filepath.Join(cmd.Dir,"compat","opengl32.dll")','filepath.Join(cmd.Dir,"opengl32.dll")')
-              s=s.replace('filepath.Join(cmd.Dir,"compat")','cmd.Dir')
-              s=s.replace('filepath.Join(dir,"compat/opengl32.dll")','filepath.Join(dir,"opengl32.dll")')
-              p.write_text(s)
-          p=root/'prepare.py';s=p.read_text().replace("root/'content/compat'","root/'content'")
-          s=s.replace("assert not (d/'opengl32.dll').exists()", "assert (d/'opengl32.dll').exists()")
-          s=s.replace("(d/'compat/opengl32.dll')", "(d/'opengl32.dll')")
-          s=s.replace("'llvmpipe' in log_text and 'Mesa 25.1.6' in log_text", "any('Driver info:' in line and 'llvmpipe' in line and 'Mesa 25.1.6' in line for line in log_text.splitlines())")
-          p.write_text(s)
+          import urllib.request,tarfile,io,hashlib
+          root=Path('mesa/licenses');root.mkdir(parents=True,exist_ok=True)
+          b=urllib.request.urlopen('https://archive.mesa3d.org/mesa-25.1.6.tar.xz',timeout=45).read()
+          (root/'source-archive-sha256.txt').write_text(hashlib.sha256(b).hexdigest())
+          with tarfile.open(fileobj=io.BytesIO(b))as t:
+              for f in t:
+                  if f.isfile() and ('/licenses/' in f.name or f.name.endswith('/docs/license.rst') or Path(f.name).name in ['COPYING','LICENSE','LICENSE.txt']):
+                      dest=root/Path(f.name).relative_to('mesa-25.1.6');dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(t.extractfile(f).read())
+          (root/'LLVM-LICENSE.txt').write_bytes(urllib.request.urlopen('https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-20.1.8/llvm/LICENSE.TXT',timeout=30).read())
+      - name: Select unique native driver and strict evidence checks
+        run: python zombiefarm-safegraphics/unique_driver.py
       - name: Compile and package offline renderer
         shell: pwsh
         run: |
@@ -77,7 +75,7 @@ jobs:
           import shutil
           p=Path('output');p.mkdir(exist_ok=True)
           shutil.copytree('zombiefarm-safegraphics',p/'build-scripts',dirs_exist_ok=True)
-          (p/'TEST-SCOPE.txt').write_text('Exact Windows EXE with bundled Mesa CPU graphics. No test-only graphics injection. Renderer assertion uses the actual Driver info line, not the launcher announcement. Windows Server 2022 is not a physical Mac/Whisky test. No post-invasion fix is claimed.\n')
+          (p/'TEST-SCOPE.txt').write_text('Exact Windows EXE with uniquely named bundled Mesa CPU graphics. No test-only driver injection. Renderer assertion uses the actual Driver info line. Windows Server 2022 is not a physical Mac/Whisky test. No post-invasion fix is claimed.\n')
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -116,7 +114,7 @@ jobs:
       - name: Preserve test scope
         if: always()
         run: |
-          echo 'Wine 9 Ubuntu 24.04; shipped Windows EXE and embedded Mesa only. Renderer assertions use only driver-reported version. Not a macOS Whisky test.' >output/wine-test-scope.txt
+          echo 'Wine 9 Ubuntu 24.04; shipped Windows EXE and uniquely named embedded Mesa only. Renderer assertions use only driver-reported version. Not a macOS Whisky test.' >output/wine-test-scope.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
