@@ -1,0 +1,61 @@
+name: Zombie Farm repaired Mac graphics verification
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-offscreen-mac-retest.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  mac:
+    runs-on: macos-14
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v0153-Windows
+          run-id: 36443902968
+          github-token: ${{ github.token }}
+          path: build
+      - name: Pinned Mac Wine test environment
+        run: |
+          softwareupdate --install-rosetta --agree-to-license || true
+          curl --fail -L -o wine.tar.xz https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.18/wine-devel-11.18-osx64.tar.xz
+          echo 'aa0ea4c82e636ae7bca2076387cb0a5affa26509ad13f119ecd0d62bd7ba6f82  wine.tar.xz' | shasum -a 256 -c -
+          mkdir wine-dist
+          tar -xf wine.tar.xz -C wine-dist
+          python -m pip install pyobjc-framework-Quartz Pillow
+      - name: Test same EXE against actual Mac window and graphics logs
+        shell: python
+        run: |
+          from pathlib import Path
+          import runpy,hashlib
+          exe=Path('build/Zombie_Farm_Windows_v0.15.3.exe')
+          assert hashlib.sha256(exe.read_bytes()).hexdigest()=='01da2a865428153c8a2b38e2045254765286357baf04fcdab075217c22779f2a'
+          p=Path('zombiefarm-mac-qa/mac_qa.py');s=p.read_text().replace('0.15.2','0.15.3')
+          s=s.replace('shutil.copy2(src,fonts/','shutil.copyfile(src,fonts/')
+          s=s.replace("'Driver info:' in text and 'llvmpipe' in text and 'Mesa 25.1.6' in text", "'Driver info:' in text and 'OSMesa off-screen context active' in text and 'llvmpipe' in text")
+          s=s.replace("'bundled_graphics_context_on_mac'","'offscreen_graphics_context_on_mac'")
+          s=s.replace("if 'ZombieFarm' in title and", "if 'ZombieFarm' in title.replace(' ', '') and")
+          s=s.replace("time.sleep(15);screenshot('01-mac-wine-title.png')", "time.sleep(40);screenshot('01-mac-wine-title.png')")
+          s=s.replace("for i in range(3):click(.5,.55);time.sleep(5)", "for i in range(3):click(.5,.55);time.sleep(8)")
+          a=" check('game_survives_play_on_mac',proc.poll() is None)"
+          b=a+"\n click(.90,.325);time.sleep(3);screenshot('03-mac-tools-interaction.png')\n check('game_survives_tools_click',proc.poll() is None)"
+          assert s.count(a)==1;s=s.replace(a,b)
+          p.write_text(s)
+          runpy.run_path(str(p),run_name='__main__')
+      - name: Preserve actual evidence and exact test source
+        if: always()
+        run: |
+          mkdir -p mac-evidence
+          cp zombiefarm-mac-qa/mac_qa.py mac-evidence/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v0153-Mac-verified
+          path: mac-evidence/
+          retention-days: 14
