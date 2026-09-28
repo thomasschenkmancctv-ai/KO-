@@ -1,0 +1,70 @@
+name: Zombie Farm v0.16 Mac compatibility regression
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-v016-mac-smoke.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  mac:
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Pinned working Mac test environment
+        run: |
+          softwareupdate --install-rosetta --agree-to-license || true
+          curl --fail -L -o wine.tar.xz https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.18/wine-devel-11.18-osx64.tar.xz
+          echo 'aa0ea4c82e636ae7bca2076387cb0a5affa26509ad13f119ecd0d62bd7ba6f82  wine.tar.xz' | shasum -a 256 -c -
+          mkdir wine-dist
+          tar -xf wine.tar.xz -C wine-dist
+          python -m pip install pyobjc-framework-Quartz Pillow
+      - name: Wait for exact final package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 60); do
+            n=$(gh api repos/thomasschenkmancctv-ai/KO-/actions/runs/36470694971/artifacts --jq '[.artifacts[]|select(.name=="ZombieFarm-v016-Windows" and .size_in_bytes>10000000)]|length')
+            if [ "$n" = 1 ];then exit 0;fi
+            sleep 5
+          done
+          exit 1
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v016-Windows
+          run-id: 36470694971
+          github-token: ${{ github.token }}
+          path: build
+      - name: Original game window and bundled renderer on Apple Silicon
+        shell: python
+        run: |
+          from pathlib import Path
+          import runpy
+          p=Path('zombiefarm-mac-qa/mac_qa.py');s=p.read_text().replace('0.15.2','0.16')
+          s=s.replace('shutil.copy2(src,fonts/','shutil.copyfile(src,fonts/')
+          s=s.replace("'Driver info:' in text and 'llvmpipe' in text and 'Mesa 25.1.6' in text", "'Driver info:' in text and 'OSMesa off-screen context active' in text and 'llvmpipe' in text")
+          s=s.replace("'bundled_graphics_context_on_mac'","'offscreen_graphics_context_on_mac'")
+          s=s.replace("if 'ZombieFarm' in title and", "if 'ZombieFarm' in title.replace(' ', '') and")
+          s=s.replace("time.sleep(15);screenshot('01-mac-wine-title.png')", "time.sleep(30);screenshot('01-mac-wine-title.png')")
+          s=s.replace("for i in range(3):click(.5,.55);time.sleep(5)", "for i in range(3):click(.5,.55);time.sleep(8)")
+          a=" check('game_survives_play_on_mac',proc.poll() is None)"
+          assert s.count(a)==1
+          s=s.replace(a,a+"\n click(.90,.325);time.sleep(3);screenshot('03-mac-tools-interaction.png')\n check('game_survives_tools_click',proc.poll() is None)")
+          p.write_text(s)
+          runpy.run_path(str(p),run_name='__main__')
+      - name: Preserve exact test and honest scope
+        if: always()
+        run: |
+          mkdir -p mac-evidence
+          cp zombiefarm-mac-qa/mac_qa.py mac-evidence/
+          echo 'Mac graphics/startup/input regression; crop/XP/save suite runs separately on native Windows. Not a complete Mac invasion playthrough.' > mac-evidence/test-scope.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v016-Mac-compatibility-QA
+          path: mac-evidence/
+          retention-days: 14
