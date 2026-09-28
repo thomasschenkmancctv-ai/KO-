@@ -36,7 +36,11 @@ jobs:
           from pathlib import Path
           import runpy
           p=Path('zombiefarm-v015/windows_qa.py')
-          s=p.read_text().replace('q.OUT=OUT','q.OUT=OUT\nq.u.IsIconic.argtypes=[q.W.HWND]\nq.u.ShowWindow.argtypes=[q.W.HWND,q.C.c_int]')
+          s=p.read_text().replace('q.OUT=OUT','q.OUT=OUT\nq.u.IsIconic.argtypes=[q.W.HWND]\nq.u.ShowWindow.argtypes=[q.W.HWND,q.C.c_int]\ndef stable_mouse(x,y):\n q.u.SetCursorPos(int(x),int(y));q.u.mouse_event(2,0,0,0,0);time.sleep(.45);q.u.mouse_event(4,0,0,0,0)\nq.mouse=stable_mouse')
+          old="row(0);q.game_click(.5,.55);waitfor(lambda:(H/'UserData/qa-growth-state.json').exists());time.sleep(4)"
+          new="row(0)\n for _ in range(5):\n  q.game_click(.5,.55);time.sleep(2)\n  if (H/'UserData/qa-growth-state.json').exists():break\n waitfor(lambda:(H/'UserData/qa-growth-state.json').exists());time.sleep(4)"
+          assert s.count(old)==1
+          s=s.replace(old,new)
           p.write_text(s,encoding='utf-8')
           runpy.run_path(str(p),run_name='__main__')
       - name: Preserve exact test script
