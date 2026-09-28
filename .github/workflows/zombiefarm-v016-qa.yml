@@ -1,0 +1,58 @@
+name: Zombie Farm v0.16 packaged gameplay regression
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-v016-qa.yml','zombiefarm-v016-sandbox/qa.py']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 12
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Wait for final artifact only
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 60); do
+            n=$(gh api repos/thomasschenkmancctv-ai/KO-/actions/runs/36470178865/artifacts --jq '[.artifacts[] | select(.name=="ZombieFarm-v016-Windows")] | length')
+            if [ "$n" = 1 ]; then exit 0; fi
+            sleep 5
+          done
+          exit 1
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v016-Windows
+          run-id: 36470178865
+          github-token: ${{ github.token }}
+          path: build
+      - name: Execute real sandbox controls and save reload
+        shell: pwsh
+        run: |
+          python -m pip install Pillow==11.3.0
+          python zombiefarm-v016-sandbox/qa.py 2>&1 | Tee-Object gameplay-test.log
+          if ($LASTEXITCODE -ne 0) { throw 'gameplay regression failed' }
+      - name: Preserve exact tested executable and all evidence
+        if: always()
+        shell: python
+        run: |
+          from pathlib import Path
+          import shutil,hashlib
+          out=Path('evidence');out.mkdir(exist_ok=True)
+          for f in ['gameplay-test.log','zombiefarm-v016-sandbox/qa.py']:
+              if Path(f).exists():shutil.copy2(f,out/Path(f).name)
+          (out/'test-scope.txt').write_text('Native Windows Server 2022 x64. Exact packaged Windows EXE. Embedded OSMesa renderer forced for compatibility-path coverage, no external driver installed. Isolated developer farm only; every XP action and toggle sent through production mouse controls. Growth matrix uses original-game tiles. No claims about all physical GPUs.\n')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v016-Windows-gameplay-QA
+          path: evidence/
+          retention-days: 14
