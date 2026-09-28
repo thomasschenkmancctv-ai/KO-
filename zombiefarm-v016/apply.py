@@ -16,8 +16,8 @@ edit(E,Z,a,'''    let source = zombie_farm_read_object_ivar(env, receiver, "data
     if zombie_order_reuse_safe(env.bundle.bundle_identifier()=="com.playforge.ZombieFarm"
         && env.bundle.bundle_version()=="1.17", &class_name, source) { return false; }
 '''+a)
-# This exact inspected original 1.17 uses the same 52-byte Cocos action-list layout
-# as the old renamed wrapper for which these safety checks were originally enabled.
+# Inspected original 1.17 uses the same 52-byte Cocos action-list layout as the
+# old renamed wrapper for which these safety checks were originally enabled.
 edit(E,Z,'        zombie_farm_is_exact_legacy_app(env),\n        zombie_farm_object_class_name(env, receiver),','        zombie_farm_invasion_app(env),\n        zombie_farm_object_class_name(env, receiver),')
 edit(E,Z,'if !zombie_farm_is_exact_legacy_app(env) || selector_name != "visit"','if !zombie_farm_invasion_app(env) || selector_name != "visit"')
 edit(E,Z,'    if zombie_farm_object_class_name(env, array) != Some("CCArray")\n        || env.objc.get_host_object(array).is_none()','    if env.objc.get_host_object(array).is_none()\n        || zombie_farm_object_class_name(env, array) != Some("CCArray")')
@@ -32,6 +32,10 @@ fn zombie_order_reuse_safe(exact: bool, table: &str, source: Option<&str>) -> bo
         for (a,t,s) in [(false,"CCTableView",Some("ZFZombieSelectionMenu")),(true,"OtherTable",Some("ZFZombieSelectionMenu")),(true,"CCTableView",Some("ZFShopMenu")),(true,"CCTableView",None)] {
             assert!(!zombie_order_reuse_safe(a,t,s));
         }
+    }
+    #[test] fn telemetry_timestamp_is_serializable() {
+        let n=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        assert!(serde_json::to_string(&serde_json::json!({"unix_ms":n})).is_ok());
     }
 }
 ''';p.write_text(s,encoding='utf-8',newline='\n')
@@ -58,7 +62,7 @@ edit(E,G,'    if op == "invasion" && state_code == 0 {','''    if op=="lifetime_
     if op == "invasion" && state_code == 0 {''')
 edit(E,G,'    let scene: id = msg![env; receiver runningScene];\n    if class_name(env, scene) == Some("ZFFarmGameScene") {','''    let scene: id = msg![env; receiver runningScene];
     if qa {
-        let report=json!({"scene":class_name(env,scene).unwrap_or("unknown"),"unix_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()});
+        let report=json!({"scene":class_name(env,scene).unwrap_or("unknown"),"unix_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64});
         let _=std::fs::write(crate::desktop_mods::data_dir().join("qa-scene.json"),report.to_string());
     }
     if class_name(env, scene) == Some("ZFFarmGameScene") {''')
