@@ -18,4 +18,15 @@ p.write_text(s)
 import runpy
 runpy.run_path(str(Path(__file__).with_name('input_fix.py')))
 p=Path('engine/src/sandbox_rewards.rs');p.write_text(p.read_text().replace('mod input_regression_tests','mod tests_input'))
-print('Terminal plant harvest flags, animation delta telemetry and mouse queue coalescing integrated')
+p=Path('engine/src/frameworks/uikit/ui_application.rs');s=p.read_text()
+a='- (bool)openURL:(id)url { // NSURL'
+b='''// The preserved offline app probes iOS companion apps and store links on reload.
+// There is no iOS application registry in this runtime. Report unavailable;
+// never crash, launch a browser, or exit merely to answer a capability query.
+- (bool)canOpenURL:(id)_url {
+    false
+}
+
+'''+a
+assert s.count(a)==1;s=s.replace(a,b);p.write_text(s)
+print('Crop flags, animation telemetry, bounded mouse queue and offline URL probe integrated')
