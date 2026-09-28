@@ -44,17 +44,32 @@ fn apply(env: &mut Environment, req: &Request) -> Result<(),String> {
  if req.op=="save" {crate::desktop_mods::menu_message("Farm saved. A recovery backup was also created.");return Ok(());}
  if req.op!="new" && req.op!="load" {return Err("Unknown save action; no files were changed.".into());}
  crate::desktop_mods::atomic(&root().join("save-switch.json"),&serde_json::to_vec(req).map_err(|e|e.to_string())?)?;
- // Launcher waits for this process to exit before starting the selected farm.
  std::process::exit(42)
 }
 pub fn override_message(env:&mut Environment, receiver:id, selector:&str) -> bool {
  if !INVASION_OVERRIDE.load(Ordering::Relaxed) || std::env::var_os("ZF_DESKTOP").is_none() || env.bundle.bundle_identifier()!="com.playforge.ZombieFarm" || selector!="lastInvasionDate" {return false;}
  let class=ObjC::read_isa(receiver,&env.mem);if env.objc.try_get_class_name(class)!=Some("GameData") {return false;}
- env.cpu.regs_mut()[0]=0;true
+ // The original countdown label calculates timeIntervalSinceDate directly.
+ // Returning nil would let canInvade pass but display a spurious two-hour timer.
+ // An autoreleased distant-past date clears BOTH original code paths without
+ // changing global clocks, hunger, crops, enemy selection, or army requirements.
+ let regs=*env.cpu.regs();
+ let date:id=msg_class![env; NSDate distantPast];
+ env.cpu.regs_mut().copy_from_slice(&regs);
+ env.cpu.regs_mut()[0]=date.to_bits();true
 }
 // Test the real original canInvade method rather than duplicating its formula.
 pub fn raw_can_invade(env:&mut Environment,state:id)->bool {
- INVASION_OVERRIDE.store(false,Ordering::Relaxed);let result:bool=msg![env; state canInvade];INVASION_OVERRIDE.store(true,Ordering::Relaxed);result
+ INVASION_OVERRIDE.store(false,Ordering::Relaxed);let result:bool=msg![env; state canInvade];INVASION_OVERRIDE.store(true,Ordering::Relaxed);
+ if std::env::var_os("ZF_GROWTH_QA").is_some() {
+  let data:id=msg![env; state gameData];
+  let date:id=msg![env; data lastInvasionDate];
+  let now:id=msg_class![env; NSDate date];
+  let elapsed:f64=msg![env; now timeIntervalSinceDate:date];
+  let report=serde_json::json!({"effective_date_is_nil":date==nil,"seconds_since_last_invasion":elapsed,"original_two_hour_wait_remaining":(7200.0-elapsed).max(0.0)});
+  if let Ok(b)=serde_json::to_vec(&report) {let _=crate::desktop_mods::atomic(&crate::desktop_mods::data_dir().join("qa-invasion-timer.json"),&b);}
+ }
+ result
 }
 #[cfg(test)] mod tests {
  use super::*;
