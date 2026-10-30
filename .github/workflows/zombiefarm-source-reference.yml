@@ -1,0 +1,25 @@
+name: Zombie Farm pinned source reference
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-source-reference.yml']
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 4
+    steps:
+      - name: Preserve exact pinned upstream files
+        run: |
+          git clone --no-checkout https://github.com/H1W0XXX/touchHLE.git engine
+          cd engine
+          git checkout fa3d09511d471f505e41abed7c535e4dfbd7c59c
+          mkdir -p ../output
+          git archive --format=zip -o ../output/pinned-upstream-source.zip HEAD
+          git rev-parse HEAD > ../output/commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZombieFarm-pinned-source
+          path: output/
+          retention-days: 90
