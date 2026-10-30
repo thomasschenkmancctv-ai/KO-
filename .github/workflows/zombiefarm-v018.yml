@@ -1,0 +1,107 @@
+name: Zombie Farm v0.18 Windows release
+on:
+  push:
+    branches: [zombiefarm-windows-v012-build]
+    paths: ['.github/workflows/zombiefarm-v018.yml','zombiefarm-v018/**']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+      CARGO_TERM_COLOR: never
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZombieFarm-v017-Windows
+          run-id: 41014320717
+          github-token: ${{ github.token }}
+          path: baseline
+      - name: Restore pinned engine and dependencies
+        shell: bash
+        run: |
+          git clone --no-checkout https://github.com/H1W0XXX/touchHLE.git engine
+          cd engine
+          git checkout fa3d09511d471f505e41abed7c535e4dfbd7c59c
+          git submodule update --init --recursive
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            engine/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: zf-v018-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            zf-v018-${{ runner.os }}-
+            zf-v017-${{ runner.os }}-
+            zf-sandbox-${{ runner.os }}-
+      - name: Windows dependencies
+        shell: bash
+        run: |
+          python -m pip install cmake==3.31.6
+          curl --fail -L --retry 2 -o boost.7z https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z
+          7z x -oengine/vendor boost.7z >/dev/null
+          mv engine/vendor/boost_1_81_0 engine/vendor/boost
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+      - name: Apply v0.18 source
+        shell: python
+        run: |
+          from pathlib import Path
+          import zipfile,base64,io
+          with zipfile.ZipFile('baseline/runtime-source.zip') as z:z.extractall('engine')
+          with zipfile.ZipFile(io.BytesIO(base64.b64decode(Path('zombiefarm-v018/source.zip.b64').read_bytes()))) as z:
+              assert z.testzip() is None
+              assert all(n.startswith('src/') and '..' not in n for n in z.namelist())
+              z.extractall('engine')
+      - name: Compile and test native Windows runtime
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p output/reports
+          rustfmt --edition 2021 engine/src/shop_prices.rs engine/src/desktop_game.rs engine/src/desktop_mods.rs
+          cd engine
+          cargo build --release --locked --bin touchHLE 2>&1 | tee ../output/reports/build.log
+          for suite in shop_prices::tests desktop_game::tests texture_mods::tests sandbox_rewards::tests zombie_growth::tests desktop_mods::tests farm_menu::tests software_gl::tests; do
+            cargo test --release --locked --lib "$suite" 2>&1 | tee -a ../output/reports/unit-tests.log
+          done
+      - name: Preserve native runtime and portable launcher compiler
+        shell: python
+        run: |
+          from pathlib import Path
+          import zipfile,shutil,hashlib,json,os,subprocess
+          out=Path('output')
+          shutil.copy2('engine/target/release/touchHLE.exe',out/'touchHLE.exe')
+          shutil.copytree('engine/touchHLE_dylibs',out/'touchHLE_dylibs',dirs_exist_ok=True)
+          with zipfile.ZipFile(out/'runtime-source.zip','w',zipfile.ZIP_DEFLATED) as z:
+              for folder in ['src','dev-scripts','dev-docs']:
+                  for f in (Path('engine')/folder).rglob('*'):
+                      if f.is_file():z.write(f,f.relative_to('engine').as_posix())
+              for n in ['Cargo.toml','Cargo.lock','build.rs','.gitmodules','README.md','LICENSE']:z.write(Path('engine')/n,n)
+          identity={'version':'0.18','baseline_run':41014320717,'commit':os.environ['GITHUB_SHA'],'runtime_sha256':hashlib.sha256((out/'touchHLE.exe').read_bytes()).hexdigest()}
+          (out/'zf-build.json').write_text(json.dumps(identity,indent=2))
+          goroot=Path(subprocess.check_output(['go','env','GOROOT'],text=True).strip())
+          with zipfile.ZipFile(out/'go-windows.zip','w',zipfile.ZIP_DEFLATED) as z:
+              for f in goroot.rglob('*'):
+                  if f.is_file():z.write(f,f.relative_to(goroot).as_posix())
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            engine/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: zf-v018-${{ runner.os }}-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ZombieFarm-v018-Windows
+          path: output/
+          retention-days: 90
